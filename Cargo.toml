@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/devspace-core",
+    "crates/devspace-proto",
+    "crates/devspace-daemon",
+    "crates/devspace-cli",
+]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
