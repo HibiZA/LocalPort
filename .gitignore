@@ -1,4 +1,18 @@
+# Rust
 /target
+
+# Swift
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+
+# Editors
 *.swp
 *.swo
+.vscode/
+
+# macOS
 .DS_Store
