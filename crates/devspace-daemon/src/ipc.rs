@@ -1,6 +1,6 @@
 use crate::port_watcher::ProjectRegistry;
-use crate::process_manager::ProcessManager;
 use crate::router::Router;
+use devspace_core::validation;
 use devspace_proto::messages::{self, Response};
 use devspace_proto::methods;
 use std::net::SocketAddr;
@@ -8,27 +8,30 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::{watch, Mutex, RwLock};
+use tokio::sync::{watch, RwLock};
 
 pub struct IpcServer {
     socket_path: PathBuf,
     router: Arc<RwLock<Router>>,
-    process_manager: Arc<Mutex<ProcessManager>>,
     projects: Arc<RwLock<ProjectRegistry>>,
+    tld: String,
+    shutdown_tx: watch::Sender<bool>,
 }
 
 impl IpcServer {
     pub fn new(
         socket_path: PathBuf,
         router: Arc<RwLock<Router>>,
-        process_manager: Arc<Mutex<ProcessManager>>,
         projects: Arc<RwLock<ProjectRegistry>>,
+        tld: String,
+        shutdown_tx: watch::Sender<bool>,
     ) -> Self {
         Self {
             socket_path,
             router,
-            process_manager,
             projects,
+            tld,
+            shutdown_tx,
         }
     }
 
@@ -45,8 +48,9 @@ impl IpcServer {
                     let (stream, _) = result?;
                     let handler = ConnectionHandler {
                         router: self.router.clone(),
-                        process_manager: self.process_manager.clone(),
                         projects: self.projects.clone(),
+                        tld: self.tld.clone(),
+                        shutdown_tx: self.shutdown_tx.clone(),
                     };
                     tokio::spawn(async move {
                         if let Err(e) = handler.handle(stream).await {
@@ -68,8 +72,9 @@ impl IpcServer {
 
 struct ConnectionHandler {
     router: Arc<RwLock<Router>>,
-    process_manager: Arc<Mutex<ProcessManager>>,
     projects: Arc<RwLock<ProjectRegistry>>,
+    tld: String,
+    shutdown_tx: watch::Sender<bool>,
 }
 
 impl ConnectionHandler {
@@ -103,8 +108,6 @@ impl ConnectionHandler {
             methods::DAEMON_STATUS => self.handle_daemon_status(req.id).await,
             methods::PROJECT_STATUS => self.handle_project_status(req.id).await,
             methods::PROJECT_INIT => self.handle_project_init(req).await,
-            methods::PROJECT_UP => self.handle_project_up(req).await,
-            methods::PROJECT_DOWN => self.handle_project_down(req).await,
             methods::ROUTE_ADD => self.handle_route_add(req).await,
             methods::ROUTE_REMOVE => self.handle_route_remove(req).await,
             methods::ROUTE_LIST => self.handle_route_list(req.id).await,
@@ -118,24 +121,22 @@ impl ConnectionHandler {
     }
 
     async fn handle_daemon_status(&self, id: u64) -> Response {
-        let editor = crate::editor::detect_editor();
         Response::success(
             id,
             serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "status": "running",
-                "editor": editor,
+                "tld": self.tld,
             }),
         )
     }
 
     async fn handle_project_status(&self, id: u64) -> Response {
-        let projects = self.projects.read().await;
-        let routes = self.router.read().await;
-        let pm = self.process_manager.lock().await;
+        // Clone data out of locks before serializing
+        let project_data = self.projects.read().await.list();
+        let route_data = self.router.read().await.list_routes();
 
-        let project_list: Vec<serde_json::Value> = projects
-            .list()
+        let project_list: Vec<serde_json::Value> = project_data
             .iter()
             .map(|(dir, name)| {
                 serde_json::json!({
@@ -145,8 +146,7 @@ impl ConnectionHandler {
             })
             .collect();
 
-        let route_list: Vec<serde_json::Value> = routes
-            .list_routes()
+        let route_list: Vec<serde_json::Value> = route_data
             .iter()
             .map(|(hostname, addr)| {
                 serde_json::json!({
@@ -156,18 +156,11 @@ impl ConnectionHandler {
             })
             .collect();
 
-        let process_list: Vec<serde_json::Value> = pm
-            .list()
-            .iter()
-            .map(|p| serde_json::to_value(p).unwrap_or_default())
-            .collect();
-
         Response::success(
             id,
             serde_json::json!({
                 "projects": project_list,
                 "routes": route_list,
-                "processes": process_list,
             }),
         )
     }
@@ -187,6 +180,14 @@ impl ConnectionHandler {
             }
         };
 
+        if !validation::is_valid_dns_label(&name) {
+            return Response::error(
+                req.id,
+                messages::INVALID_PARAMS,
+                format!("invalid project name '{}': must be a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)", name),
+            );
+        }
+
         self.projects
             .write()
             .await
@@ -197,93 +198,9 @@ impl ConnectionHandler {
             serde_json::json!({
                 "name": name,
                 "directory": directory.to_string_lossy(),
-                "hostname": format!("{}.localhost", name),
+                "hostname": format!("{}.{}", name, self.tld),
             }),
         )
-    }
-
-    async fn handle_project_up(&self, req: &messages::Request) -> Response {
-        let directory = match req.params.get("directory").and_then(|v| v.as_str()) {
-            Some(d) => PathBuf::from(d),
-            None => {
-                return Response::error(
-                    req.id,
-                    messages::INVALID_PARAMS,
-                    "missing 'directory' param".into(),
-                );
-            }
-        };
-
-        // Load project config
-        let config = match devspace_core::config::load_project_config(&directory) {
-            Ok(c) => c,
-            Err(e) => {
-                return Response::error(req.id, messages::INTERNAL_ERROR, e.to_string());
-            }
-        };
-
-        let project_name = config.project.name.clone();
-
-        // Register project if not already registered
-        self.projects
-            .write()
-            .await
-            .register(directory.clone(), project_name.clone());
-
-        // Spawn dev server if configured
-        let mut results = serde_json::Map::new();
-        results.insert("project".into(), serde_json::json!(project_name));
-
-        if let Some(ref cmd) = config.dev.command {
-            let process_id = format!("{}-dev", project_name);
-            let env = config.dev.env.clone();
-            let mut pm = self.process_manager.lock().await;
-            match pm
-                .spawn(
-                    process_id.clone(),
-                    cmd,
-                    &directory,
-                    &env,
-                    devspace_core::types::ProcessType::DevServer,
-                )
-                .await
-            {
-                Ok(pid) => {
-                    results.insert("dev_pid".into(), serde_json::json!(pid));
-                    results.insert("dev_command".into(), serde_json::json!(cmd));
-                }
-                Err(e) => {
-                    return Response::error(
-                        req.id,
-                        messages::INTERNAL_ERROR,
-                        format!("failed to spawn dev server: {}", e),
-                    );
-                }
-            }
-        }
-
-        Response::success(req.id, serde_json::Value::Object(results))
-    }
-
-    async fn handle_project_down(&self, req: &messages::Request) -> Response {
-        let name = match req.params.get("name").and_then(|v| v.as_str()) {
-            Some(n) => n.to_string(),
-            None => {
-                return Response::error(
-                    req.id,
-                    messages::INVALID_PARAMS,
-                    "missing 'name' param".into(),
-                );
-            }
-        };
-
-        let process_id = format!("{}-dev", name);
-        let mut pm = self.process_manager.lock().await;
-        if let Err(e) = pm.stop(&process_id).await {
-            tracing::warn!("error stopping {}: {}", process_id, e);
-        }
-
-        Response::success(req.id, serde_json::json!({"stopped": name}))
     }
 
     async fn handle_route_add(&self, req: &messages::Request) -> Response {
@@ -300,6 +217,14 @@ impl ConnectionHandler {
                 );
             }
         };
+
+        if !validation::is_valid_hostname(&hostname) {
+            return Response::error(
+                req.id,
+                messages::INVALID_PARAMS,
+                format!("invalid hostname '{}': must be a valid DNS name", hostname),
+            );
+        }
 
         let addr: SocketAddr = match upstream.parse() {
             Ok(a) => a,
@@ -333,9 +258,8 @@ impl ConnectionHandler {
     }
 
     async fn handle_route_list(&self, id: u64) -> Response {
-        let routes = self.router.read().await;
-        let list: Vec<serde_json::Value> = routes
-            .list_routes()
+        let route_data = self.router.read().await.list_routes();
+        let list: Vec<serde_json::Value> = route_data
             .iter()
             .map(|(hostname, addr)| {
                 serde_json::json!({
@@ -350,8 +274,7 @@ impl ConnectionHandler {
 
     async fn handle_daemon_shutdown(&self, id: u64) -> Response {
         tracing::info!("shutdown requested via IPC");
-        // The actual shutdown is handled by the daemon watching for this
-        // For now, just acknowledge
+        let _ = self.shutdown_tx.send(true);
         Response::success(id, serde_json::json!({"status": "shutting_down"}))
     }
 }

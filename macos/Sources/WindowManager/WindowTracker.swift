@@ -44,6 +44,14 @@ final class WindowTracker {
             object: nil
         )
 
+        // Observe new app launches for immediate child process detection
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(appDidLaunch(_:)),
+            name: NSWorkspace.didLaunchApplicationNotification,
+            object: nil
+        )
+
         // Initial scan
         pollWindows()
         logger.info("WindowTracker started")
@@ -154,45 +162,69 @@ final class WindowTracker {
 
     private func matchProject(for window: TrackedWindow) -> String? {
         for project in projects {
+            // 1. Check explicit window rules from .devspace.toml first
+            if matchesWindowRules(window, project: project) {
+                return project.id
+            }
+
+            // 2. Fall back to built-in heuristics
             switch window.windowRole {
             case .editor:
-                // Editor titles typically contain the project directory name
-                // e.g., "main.rs - project-a - Cursor"
                 if window.title.localizedCaseInsensitiveContains(project.directoryName) {
                     return project.id
                 }
 
             case .browser:
-                // Browser titles often include the URL
-                // e.g., "My App - project-a.localhost"
                 if window.title.localizedCaseInsensitiveContains(project.hostname) {
                     return project.id
                 }
-                // Also try reading URL via accessibility API
                 if let url = getBrowserURL(for: window),
                    url.contains(project.hostname) {
                     return project.id
                 }
 
             case .terminal:
-                // Check working directory of the shell process
                 if let cwd = getProcessCwd(pid: window.ownerPID),
                    cwd.hasPrefix(project.directory) {
                     return project.id
                 }
-                // Fallback: check title
                 if window.title.localizedCaseInsensitiveContains(project.directoryName) {
                     return project.id
                 }
 
             case .agent, .other:
-                // Generic title matching
                 if window.title.localizedCaseInsensitiveContains(project.directoryName) {
                     return project.id
                 }
             }
         }
         return nil
+    }
+
+    /// Check if any of the project's window rules match this window.
+    private func matchesWindowRules(_ window: TrackedWindow, project: Project) -> Bool {
+        for rule in project.windowRules {
+            // If rule specifies a role filter, check it
+            if let roleFilter = rule.role {
+                let windowRoleStr = String(describing: window.windowRole)
+                if roleFilter.lowercased() != windowRoleStr.lowercased() {
+                    continue
+                }
+            }
+
+            // Check title pattern
+            if rule.matchesTitle(window.title) {
+                return true
+            }
+
+            // Check URL pattern (only for browsers)
+            if rule.urlPattern != nil, window.windowRole == .browser {
+                if let url = getBrowserURL(for: window), rule.matchesURL(url) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     // MARK: - Process Inspection
@@ -262,7 +294,7 @@ final class WindowTracker {
                 var valueRef: CFTypeRef?
                 if AXUIElementCopyAttributeValue(child, kAXValueAttribute as CFString, &valueRef) == .success,
                    let value = valueRef as? String,
-                   value.contains(".localhost") || value.contains("://") {
+                   value.contains(".test") || value.contains(".localhost") || value.contains("://") {
                     return value
                 }
             }
@@ -299,6 +331,7 @@ final class WindowTracker {
         AXObserverAddNotification(observer, appElement, kAXMovedNotification as CFString, refcon)
         AXObserverAddNotification(observer, appElement, kAXResizedNotification as CFString, refcon)
         AXObserverAddNotification(observer, appElement, kAXFocusedWindowChangedNotification as CFString, refcon)
+        AXObserverAddNotification(observer, appElement, kAXWindowCreatedNotification as CFString, refcon)
 
         CFRunLoopAddSource(
             CFRunLoopGetCurrent(),
@@ -328,6 +361,18 @@ final class WindowTracker {
             window.lastFocusedAt = Date()
             delegate?.windowTracker(self, windowFocused: window)
             break
+        }
+    }
+
+    @objc private func appDidLaunch(_ notification: Notification) {
+        // When a new app launches (including child processes), rescan immediately
+        // so we can pick up new windows faster than the 0.5s poll interval
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.pollWindows()
+        }
+        // Second pass for apps that take longer to create their first window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.pollWindows()
         }
     }
 

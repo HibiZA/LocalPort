@@ -13,6 +13,27 @@ struct SavedLayout: Codable {
     var frames: [UInt32: CGRect] = [:]
 }
 
+/// A rule for matching windows to a project by title or URL pattern.
+/// Configured in .devspace.toml under [[windows]].
+struct WindowRule: Codable {
+    /// Regex pattern matched against window title
+    var titlePattern: String?
+    /// Regex pattern matched against browser URL (via accessibility)
+    var urlPattern: String?
+    /// The window role this rule applies to (optional filter)
+    var role: String?
+
+    func matchesTitle(_ title: String) -> Bool {
+        guard let pattern = titlePattern, !pattern.isEmpty else { return false }
+        return title.range(of: pattern, options: .regularExpression, range: nil, locale: nil) != nil
+    }
+
+    func matchesURL(_ url: String) -> Bool {
+        guard let pattern = urlPattern, !pattern.isEmpty else { return false }
+        return url.range(of: pattern, options: .regularExpression, range: nil, locale: nil) != nil
+    }
+}
+
 struct Project: Identifiable, Codable {
     let id: String
     var name: String
@@ -21,6 +42,7 @@ struct Project: Identifiable, Codable {
     var color: NSColorWrapper
     var layoutPreset: LayoutPreset?
     var savedLayout: SavedLayout?
+    var windowRules: [WindowRule] = []
     var isActive: Bool = false
     var lastSwitchedAt: Date = Date()
 

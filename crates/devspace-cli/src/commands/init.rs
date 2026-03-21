@@ -1,7 +1,10 @@
-use devspace_core::types::ProjectConfig;
+use devspace_core::config::GlobalConfig;
+use devspace_core::types::{ProjectConfig, ProjectSection};
 use std::path::PathBuf;
 
 pub async fn run(name: Option<String>) -> anyhow::Result<()> {
+    let config = GlobalConfig::load().unwrap_or_default();
+    let tld = &config.tld;
     let cwd = std::env::current_dir()?;
 
     let project_name = name.unwrap_or_else(|| {
@@ -12,7 +15,7 @@ pub async fn run(name: Option<String>) -> anyhow::Result<()> {
     });
 
     // Slugify the name for hostname use
-    let hostname = slugify(&project_name);
+    let hostname = slugify(&project_name)?;
 
     let config_path = cwd.join(".devspace.toml");
     if config_path.exists() {
@@ -21,42 +24,48 @@ pub async fn run(name: Option<String>) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let config_content = format!(
-        r#"[project]
-name = "{name}"
-hostname = "{hostname}"
-
-[dev]
-# command = "npm run dev"
-# port = 3000
-
-[editor]
-type = "auto"
-"#,
-        name = project_name,
-        hostname = hostname,
-    );
+    // Use proper TOML serialization to prevent injection
+    let project_config = ProjectConfig {
+        project: ProjectSection {
+            name: project_name.clone(),
+            hostname: Some(hostname.clone()),
+        },
+    };
+    let config_content = toml::to_string_pretty(&project_config)?;
 
     std::fs::write(&config_path, &config_content)?;
 
     println!("  Initialized DevSpace project");
     println!("  name:     {}", project_name);
-    println!("  hostname: {}.localhost", hostname);
+    println!("  hostname: {}.{}", hostname, tld);
     println!("  config:   {}", config_path.display());
-    println!();
-    println!("  Edit .devspace.toml to configure your dev server command,");
-    println!("  then run `devspace up` to start.");
 
     Ok(())
 }
 
-fn slugify(name: &str) -> String {
-    name.to_lowercase()
+fn slugify(name: &str) -> anyhow::Result<String> {
+    let result: String = name
+        .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
-        .to_string()
+        .to_string();
+
+    if result.is_empty() {
+        anyhow::bail!("project name must contain at least one alphanumeric character");
+    }
+    if result.len() > 63 {
+        anyhow::bail!("project hostname too long (max 63 chars)");
+    }
+
+    Ok(result)
 }
 
 fn read_existing_name(path: &PathBuf) -> anyhow::Result<String> {

@@ -16,8 +16,13 @@ final class DaemonClient {
     var onEvent: ((String, [String: Any]) -> Void)?
     private(set) var isConnected = false
 
-    init(socketPath: String = "/tmp/devspace.sock") {
-        self.socketPath = socketPath
+    init(socketPath: String? = nil) {
+        self.socketPath = socketPath ?? DaemonClient.defaultSocketPath()
+    }
+
+    private static func defaultSocketPath() -> String {
+        let uid = getuid()
+        return "/tmp/devspace-\(uid).sock"
     }
 
     // MARK: - Connection
@@ -149,15 +154,6 @@ final class DaemonClient {
     func registerProject(directory: String) throws -> [String: Any] {
         let result = try callSync(method: "project.register", params: ["dir": directory])
         return result as? [String: Any] ?? [:]
-    }
-
-    func startProject(id: String) throws -> [String: Any] {
-        let result = try callSync(method: "project.start", params: ["id": id])
-        return result as? [String: Any] ?? [:]
-    }
-
-    func stopProject(id: String) throws {
-        _ = try callSync(method: "project.stop", params: ["id": id])
     }
 
     func getProxyStatus() throws -> [[String: Any]] {

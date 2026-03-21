@@ -4,7 +4,11 @@ mod commands;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "devspace", about = "Manage parallel development projects", version)]
+#[command(
+    name = "devspace",
+    about = "Manage parallel development projects",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -18,16 +22,10 @@ enum Commands {
         #[arg(short, long)]
         name: Option<String>,
     },
-    /// Start project services (also starts daemon if not running)
-    Up {
-        /// Run daemon in foreground (don't daemonize)
-        #[arg(long)]
-        foreground: bool,
-    },
     /// Show status of all projects and routes
     Status,
-    /// Stop project services
-    Down,
+    /// One-time system setup (DNS resolver, Caddy CA, port forwarding)
+    Setup,
     /// Daemon management commands
     Daemon {
         #[command(subcommand)]
@@ -55,12 +53,13 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Init { name } => commands::init::run(name).await,
-        Commands::Up { foreground } => commands::up::run(foreground).await,
         Commands::Status => commands::status::run().await,
-        Commands::Down => commands::down::run().await,
+        Commands::Setup => commands::setup::run().await,
         Commands::Daemon { command } => match command {
-            DaemonCommands::Start { foreground } => commands::up::run_daemon(foreground).await,
-            DaemonCommands::Stop => commands::down::stop_daemon().await,
+            DaemonCommands::Start { foreground } => {
+                commands::status::start_daemon(foreground).await
+            }
+            DaemonCommands::Stop => commands::status::stop_daemon().await,
             DaemonCommands::Status => commands::status::daemon_status().await,
         },
     }

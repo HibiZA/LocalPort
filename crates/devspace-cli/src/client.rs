@@ -16,7 +16,10 @@ impl IpcClient {
             if e.kind() == std::io::ErrorKind::ConnectionRefused
                 || e.kind() == std::io::ErrorKind::NotFound
             {
-                anyhow::anyhow!("daemon not running (could not connect to {})", socket_path.display())
+                anyhow::anyhow!(
+                    "daemon not running (could not connect to {})",
+                    socket_path.display()
+                )
             } else {
                 anyhow::anyhow!("failed to connect to daemon: {}", e)
             }
@@ -38,10 +41,7 @@ impl IpcClient {
         let mut json = serde_json::to_string(&request)?;
         json.push('\n');
 
-        self.stream
-            .get_mut()
-            .write_all(json.as_bytes())
-            .await?;
+        self.stream.get_mut().write_all(json.as_bytes()).await?;
 
         let mut line = String::new();
         self.stream.read_line(&mut line).await?;

@@ -76,10 +76,10 @@ struct HotkeyBinding: Codable, Equatable {
         case 36: return "Return"
         case 51: return "Delete"
         case 53: return "Esc"
-        case 123: return "←"
-        case 124: return "→"
-        case 125: return "↓"
-        case 126: return "↑"
+        case 123: return "\u{2190}"
+        case 124: return "\u{2192}"
+        case 125: return "\u{2193}"
+        case 126: return "\u{2191}"
         case 18: return "1"; case 19: return "2"; case 20: return "3"
         case 21: return "4"; case 23: return "5"; case 22: return "6"
         case 26: return "7"; case 28: return "8"; case 25: return "9"
@@ -216,26 +216,59 @@ final class HotkeyPreferences {
 
 // MARK: - Preferences Window Controller
 
+private let kToolbarGeneral = NSToolbarItem.Identifier("general")
+private let kToolbarShortcuts = NSToolbarItem.Identifier("shortcuts")
+private let kToolbarAbout = NSToolbarItem.Identifier("about")
+
 final class PreferencesWindowController: NSWindowController {
     static let shared = PreferencesWindowController()
 
     private let prefs = AppPreferences.shared
     var onPreferencesChanged: (() -> Void)?
 
+    private var tabViews: [String: NSView] = [:]
+    private var currentTab = "general"
+    private var shortcutButtons: [HotkeyAction: NSButton] = [:]
+
+    private let winW: CGFloat = 480
+    private let winH: CGFloat = 420
+    private let contentH: CGFloat = 348  // winH minus toolbar+titlebar (~72px)
+    private let inset: CGFloat = 28
+
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 440),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "DevSpace Preferences"
+        window.title = "General"
         window.center()
         window.isReleasedWhenClosed = false
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
 
         super.init(window: window)
 
-        window.contentView = buildTabbedUI()
+        let toolbar = NSToolbar(identifier: "PreferencesToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconAndLabel
+        toolbar.allowsUserCustomization = false
+        toolbar.selectedItemIdentifier = kToolbarGeneral
+        window.toolbar = toolbar
+
+        let bg = NSVisualEffectView(frame: window.contentView!.bounds)
+        bg.material = .hudWindow
+        bg.blendingMode = .behindWindow
+        bg.state = .active
+        bg.autoresizingMask = [.width, .height]
+        window.contentView = bg
+
+        tabViews["general"] = buildGeneralTab()
+        tabViews["shortcuts"] = buildShortcutsTab()
+        tabViews["about"] = buildAboutTab()
+
+        switchToTab("general", animate: false)
     }
 
     @available(*, unavailable)
@@ -255,96 +288,93 @@ final class PreferencesWindowController: NSWindowController {
         }
     }
 
-    // MARK: - Tabbed UI
+    private func switchToTab(_ tab: String, animate: Bool = true) {
+        guard let window = window, let contentView = window.contentView else { return }
 
-    private func buildTabbedUI() -> NSView {
-        let tabView = NSTabView(frame: NSRect(x: 0, y: 0, width: 520, height: 440))
-        tabView.autoresizingMask = [.width, .height]
+        for (_, view) in tabViews {
+            view.removeFromSuperview()
+        }
 
-        let generalTab = NSTabViewItem(identifier: "general")
-        generalTab.label = "General"
-        generalTab.view = buildGeneralTab()
-        tabView.addTabViewItem(generalTab)
+        guard let newView = tabViews[tab] else { return }
+        newView.frame = contentView.bounds
+        newView.autoresizingMask = [.width, .height]
+        contentView.addSubview(newView)
+        currentTab = tab
 
-        let shortcutsTab = NSTabViewItem(identifier: "shortcuts")
-        shortcutsTab.label = "Shortcuts"
-        shortcutsTab.view = buildShortcutsTab()
-        tabView.addTabViewItem(shortcutsTab)
-
-        let aboutTab = NSTabViewItem(identifier: "about")
-        aboutTab.label = "About"
-        aboutTab.view = buildAboutTab()
-        tabView.addTabViewItem(aboutTab)
-
-        return tabView
+        let titles = ["general": "General", "shortcuts": "Shortcuts", "about": "About"]
+        window.title = titles[tab] ?? ""
     }
 
     // MARK: - General Tab
 
     private func buildGeneralTab() -> NSView {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 380))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: winW, height: contentH))
+        let contentW = winW - inset * 2
 
-        var y: CGFloat = 350
+        var y: CGFloat = contentH - 16
 
-        // Section: Appearance
-        y = addSectionHeader("Appearance", in: container, y: y)
-
-        y = addSliderRow(
-            label: "Border Width:",
-            value: Double(prefs.borderWidth),
-            range: 1...10,
-            in: container, y: y
-        ) { [weak self] val in
-            self?.prefs.borderWidth = CGFloat(val)
-            self?.onPreferencesChanged?()
-        }
-
-        y = addCheckboxRow(
-            label: "Border Glow Effect",
-            checked: prefs.borderGlow,
-            in: container, y: y
+        // --- Border Glow ---
+        y = addToggleRow(
+            label: "Border Glow", description: "Colored glow around active project's screen edge",
+            on: prefs.borderGlow, in: container, x: inset, y: y, width: contentW
         ) { [weak self] val in
             self?.prefs.borderGlow = val
             self?.onPreferencesChanged?()
         }
 
-        y = addCheckboxRow(
-            label: "Dim Inactive Project Windows",
-            checked: prefs.dimInactive,
-            in: container, y: y
+        y = addSliderRow(
+            label: "Border Width", value: Double(prefs.borderWidth),
+            range: 1...10, format: "%.0fpx",
+            in: container, x: inset, y: y, width: contentW
+        ) { [weak self] val in
+            self?.prefs.borderWidth = CGFloat(val)
+            self?.onPreferencesChanged?()
+        }
+
+        y -= 8
+        addThinSeparator(in: container, x: inset, y: y, width: contentW)
+        y -= 12
+
+        // --- Dim ---
+        y = addToggleRow(
+            label: "Dim Inactive Windows", description: "Reduce opacity of windows not in the active project",
+            on: prefs.dimInactive, in: container, x: inset, y: y, width: contentW
         ) { [weak self] val in
             self?.prefs.dimInactive = val
             self?.onPreferencesChanged?()
         }
 
         y = addSliderRow(
-            label: "Dim Opacity:",
-            value: Double(prefs.dimOpacity),
-            range: 0.1...0.8,
-            in: container, y: y
+            label: "Dim Amount", value: Double(prefs.dimOpacity),
+            range: 0.1...0.8, format: "%.0f%%", multiplier: 100,
+            in: container, x: inset, y: y, width: contentW
         ) { [weak self] val in
             self?.prefs.dimOpacity = CGFloat(val)
             self?.onPreferencesChanged?()
         }
 
+        y -= 8
+        addThinSeparator(in: container, x: inset, y: y, width: contentW)
+        y -= 12
+
+        // --- Animation ---
         y = addSliderRow(
-            label: "Animation Speed:",
-            value: prefs.animationDuration,
-            range: 0.05...0.5,
-            in: container, y: y
+            label: "Transition Speed", value: prefs.animationDuration,
+            range: 0.05...0.5, format: "%.2fs",
+            in: container, x: inset, y: y, width: contentW
         ) { [weak self] val in
             self?.prefs.animationDuration = val
             self?.onPreferencesChanged?()
         }
 
-        // Section: Behavior
-        y -= 10
-        y = addSectionHeader("Behavior", in: container, y: y)
+        y -= 8
+        addThinSeparator(in: container, x: inset, y: y, width: contentW)
+        y -= 12
 
-        y = addCheckboxRow(
-            label: "Close project windows when DevSpace quits",
-            checked: UserAppPreferences.shared.closeWindowsOnQuit,
-            in: container, y: y
+        // --- Behavior ---
+        y = addToggleRow(
+            label: "Close Windows on Quit", description: nil,
+            on: UserAppPreferences.shared.closeWindowsOnQuit, in: container, x: inset, y: y, width: contentW
         ) { val in
             UserAppPreferences.shared.closeWindowsOnQuit = val
         }
@@ -354,202 +384,359 @@ final class PreferencesWindowController: NSWindowController {
 
     // MARK: - Shortcuts Tab
 
-    private var shortcutButtons: [HotkeyAction: NSButton] = [:]
-
     private func buildShortcutsTab() -> NSView {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 380))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: winW, height: contentH))
+        let contentW = winW - inset * 2
 
-        var y: CGFloat = 350
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: winW, height: contentH))
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.automaticallyAdjustsContentInsets = true
 
-        y = addSectionHeader("Project Switching", in: container, y: y)
+        let docView = FlippedView(frame: NSRect(x: 0, y: 0, width: winW, height: 600))
+        scrollView.documentView = docView
 
-        // Main actions first
-        let mainActions: [HotkeyAction] = [.cycleNext, .toggleLast]
-        for action in mainActions {
-            y = addShortcutRow(action: action, in: container, y: y)
+        var y: CGFloat = 12
+
+        // Section: Navigation
+        y = addSectionLabelFlipped("NAVIGATION", in: docView, x: inset, y: y)
+
+        let navActions: [HotkeyAction] = [.cycleNext, .toggleLast]
+        for (i, action) in navActions.enumerated() {
+            y = addShortcutRow(action: action, in: docView, x: inset, y: y, width: contentW)
+            if i < navActions.count - 1 {
+                addThinSeparatorFlipped(in: docView, x: inset, y: y, width: contentW)
+                y += 4
+            }
         }
 
-        y -= 10
-        y = addSectionHeader("Direct Switch", in: container, y: y)
+        y += 12
+        addThinSeparatorFlipped(in: docView, x: inset, y: y, width: contentW)
+        y += 12
 
-        // Project number shortcuts
-        let numberActions: [HotkeyAction] = [
+        // Section: Direct Switch
+        y = addSectionLabelFlipped("DIRECT SWITCH", in: docView, x: inset, y: y)
+
+        let numActions: [HotkeyAction] = [
             .switchProject1, .switchProject2, .switchProject3,
             .switchProject4, .switchProject5, .switchProject6,
             .switchProject7, .switchProject8, .switchProject9,
         ]
-        for action in numberActions {
-            y = addShortcutRow(action: action, in: container, y: y)
+        for (i, action) in numActions.enumerated() {
+            y = addShortcutRow(action: action, in: docView, x: inset, y: y, width: contentW)
+            if i < numActions.count - 1 {
+                addThinSeparatorFlipped(in: docView, x: inset, y: y, width: contentW)
+                y += 4
+            }
         }
 
+        y += 20
+
         // Reset button
-        let resetButton = NSButton(title: "Reset to Defaults", target: nil, action: nil)
-        resetButton.frame = NSRect(x: 340, y: 10, width: 140, height: 28)
+        let resetButton = NSButton(title: "Reset All to Defaults", target: nil, action: nil)
         resetButton.bezelStyle = .rounded
-        let resetHandler = ButtonHandler { [weak self] in
+        resetButton.controlSize = .regular
+        resetButton.frame = NSRect(x: (winW - 180) / 2, y: y, width: 180, height: 28)
+        let handler = ButtonHandler { [weak self] in
             HotkeyPreferences.shared.resetToDefaults()
             self?.refreshShortcutButtons()
         }
-        resetButton.target = resetHandler
+        resetButton.target = handler
         resetButton.action = #selector(ButtonHandler.clicked)
-        objc_setAssociatedObject(resetButton, "handler", resetHandler, .OBJC_ASSOCIATION_RETAIN)
-        container.addSubview(resetButton)
+        objc_setAssociatedObject(resetButton, "handler", handler, .OBJC_ASSOCIATION_RETAIN)
+        docView.addSubview(resetButton)
+        y += 48
 
+        docView.frame = NSRect(x: 0, y: 0, width: winW, height: max(y, contentH))
+
+        container.addSubview(scrollView)
         return container
     }
 
-    private func addShortcutRow(action: HotkeyAction, in container: NSView, y: CGFloat) -> CGFloat {
+    private func addShortcutRow(action: HotkeyAction, in container: NSView, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
         let label = NSTextField(labelWithString: action.label)
-        label.frame = NSRect(x: 40, y: y, width: 180, height: 22)
+        label.font = .systemFont(ofSize: 13)
         label.textColor = .labelColor
+        label.frame = NSRect(x: x, y: y, width: 200, height: 20)
         container.addSubview(label)
 
         let binding = HotkeyPreferences.shared.binding(for: action)
-        let button = NSButton(title: binding.displayString, target: nil, action: nil)
-        button.frame = NSRect(x: 230, y: y - 1, width: 200, height: 24)
-        button.bezelStyle = .roundRect
-        button.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        let button = ShortcutKeyView(binding: binding)
+        button.frame = NSRect(x: x + width - 164, y: y - 2, width: 164, height: 24)
 
-        let handler = ShortcutButtonHandler(action: action, button: button)
-        button.target = handler
-        button.action = #selector(ShortcutButtonHandler.clicked(_:))
+        let handler = ShortcutButtonHandler(action: action, keyView: button)
+        button.onClick = { [weak handler] in handler?.startRecording() }
         objc_setAssociatedObject(button, "handler", handler, .OBJC_ASSOCIATION_RETAIN)
 
         container.addSubview(button)
         shortcutButtons[action] = button
 
-        return y - 28
+        return y + 32
     }
 
     private func refreshShortcutButtons() {
         for (action, button) in shortcutButtons {
             let binding = HotkeyPreferences.shared.binding(for: action)
-            button.title = binding.displayString
+            if let keyView = button as? ShortcutKeyView {
+                keyView.update(binding: binding)
+            } else {
+                button.title = binding.displayString
+            }
         }
     }
 
     // MARK: - About Tab
 
     private func buildAboutTab() -> NSView {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 380))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: winW, height: contentH))
 
-        var y: CGFloat = 320
+        let iconSize: CGFloat = 72
+        let iconView = AppIconView()
+        iconView.frame = NSRect(x: (winW - iconSize) / 2, y: contentH - 100, width: iconSize, height: iconSize)
+        container.addSubview(iconView)
 
         let titleLabel = NSTextField(labelWithString: "DevSpace")
         titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
-        titleLabel.frame = NSRect(x: 0, y: y, width: 500, height: 30)
         titleLabel.alignment = .center
+        titleLabel.frame = NSRect(x: 0, y: contentH - 136, width: winW, height: 28)
         container.addSubview(titleLabel)
 
-        y -= 30
         let versionLabel = NSTextField(labelWithString: "Version 0.1.0")
-        versionLabel.font = .systemFont(ofSize: 13)
+        versionLabel.font = .systemFont(ofSize: 12)
         versionLabel.textColor = .secondaryLabelColor
-        versionLabel.frame = NSRect(x: 0, y: y, width: 500, height: 20)
         versionLabel.alignment = .center
+        versionLabel.frame = NSRect(x: 0, y: contentH - 156, width: winW, height: 16)
         container.addSubview(versionLabel)
 
-        y -= 30
         let descLabel = NSTextField(labelWithString: "Project-first workspace manager for macOS")
         descLabel.font = .systemFont(ofSize: 12)
         descLabel.textColor = .tertiaryLabelColor
-        descLabel.frame = NSRect(x: 0, y: y, width: 500, height: 18)
         descLabel.alignment = .center
+        descLabel.frame = NSRect(x: 0, y: contentH - 180, width: winW, height: 16)
         container.addSubview(descLabel)
+
+        let techLabel = NSTextField(labelWithString: "Swift \u{00B7} AppKit \u{00B7} AXUIElement \u{00B7} Rust \u{00B7} JSON-RPC")
+        techLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        techLabel.textColor = .quaternaryLabelColor
+        techLabel.alignment = .center
+        techLabel.frame = NSRect(x: 0, y: contentH - 204, width: winW, height: 14)
+        container.addSubview(techLabel)
 
         return container
     }
 
-    // MARK: - UI Helpers
+    // MARK: - Row Helpers
 
-    private func addSectionHeader(_ title: String, in container: NSView, y: CGFloat) -> CGFloat {
-        let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
-        label.frame = NSRect(x: 20, y: y, width: 440, height: 20)
-        container.addSubview(label)
-
-        let sep = NSBox(frame: NSRect(x: 20, y: y - 4, width: 440, height: 1))
-        sep.boxType = .separator
-        container.addSubview(sep)
-
-        return y - 30
-    }
-
-    private func addCheckboxRow(label: String, checked: Bool, in container: NSView, y: CGFloat, onChange: @escaping (Bool) -> Void) -> CGFloat {
-        let checkbox = NSButton(checkboxWithTitle: label, target: nil, action: nil)
-        checkbox.state = checked ? .on : .off
-        checkbox.frame = NSRect(x: 40, y: y, width: 400, height: 22)
-
-        let handler = CheckboxHandler(onChange: onChange)
-        checkbox.target = handler
-        checkbox.action = #selector(CheckboxHandler.toggled(_:))
-        objc_setAssociatedObject(checkbox, "handler", handler, .OBJC_ASSOCIATION_RETAIN)
-
-        container.addSubview(checkbox)
-        return y - 30
-    }
-
-    private func addSliderRow(label: String, value: Double, range: ClosedRange<Double>, in container: NSView, y: CGFloat, onChange: @escaping (Double) -> Void) -> CGFloat {
+    private func addToggleRow(label: String, description: String?, on: Bool,
+                               in container: NSView, x: CGFloat, y: CGFloat, width: CGFloat,
+                               onChange: @escaping (Bool) -> Void) -> CGFloat {
         let lbl = NSTextField(labelWithString: label)
-        lbl.frame = NSRect(x: 40, y: y, width: 130, height: 22)
+        lbl.font = .systemFont(ofSize: 13)
+        lbl.textColor = .labelColor
+        lbl.frame = NSRect(x: x, y: y - 18, width: width - 60, height: 18)
         container.addSubview(lbl)
 
-        let slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound, target: nil, action: nil)
-        slider.frame = NSRect(x: 175, y: y, width: 200, height: 22)
+        var rowH: CGFloat = 28
 
-        let valueLabel = NSTextField(labelWithString: String(format: "%.1f", value))
-        valueLabel.frame = NSRect(x: 385, y: y, width: 60, height: 22)
-        valueLabel.alignment = .left
-        container.addSubview(valueLabel)
+        if let desc = description {
+            let descLabel = NSTextField(labelWithString: desc)
+            descLabel.font = .systemFont(ofSize: 11)
+            descLabel.textColor = .tertiaryLabelColor
+            descLabel.frame = NSRect(x: x, y: y - 34, width: width - 60, height: 14)
+            container.addSubview(descLabel)
+            rowH = 42
+        }
 
-        let handler = SliderHandler(valueLabel: valueLabel, onChange: onChange)
+        let toggle = NSSwitch()
+        toggle.state = on ? .on : .off
+        toggle.controlSize = .small
+        let toggleW: CGFloat = 38
+        toggle.frame = NSRect(x: x + width - toggleW, y: y - 20, width: toggleW, height: 20)
+        let handler = SwitchHandler(onChange: onChange)
+        toggle.target = handler
+        toggle.action = #selector(SwitchHandler.toggled(_:))
+        objc_setAssociatedObject(toggle, "handler", handler, .OBJC_ASSOCIATION_RETAIN)
+        container.addSubview(toggle)
+
+        return y - rowH
+    }
+
+    private func addSliderRow(label: String, value: Double, range: ClosedRange<Double>,
+                               format: String, multiplier: Double = 1,
+                               in container: NSView, x: CGFloat, y: CGFloat, width: CGFloat,
+                               onChange: @escaping (Double) -> Void) -> CGFloat {
+        let lbl = NSTextField(labelWithString: label)
+        lbl.font = .systemFont(ofSize: 13)
+        lbl.textColor = .labelColor
+        lbl.frame = NSRect(x: x, y: y - 18, width: 130, height: 18)
+        container.addSubview(lbl)
+
+        let sliderX: CGFloat = x + 136
+        let sliderW: CGFloat = width - 200
+        let slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
+                              target: nil, action: nil)
+        slider.frame = NSRect(x: sliderX, y: y - 18, width: sliderW, height: 18)
+        slider.controlSize = .small
+
+        let displayVal = String(format: format, value * multiplier)
+        let valLabel = NSTextField(labelWithString: displayVal)
+        valLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        valLabel.textColor = .secondaryLabelColor
+        valLabel.alignment = .right
+        valLabel.frame = NSRect(x: x + width - 56, y: y - 18, width: 56, height: 18)
+        container.addSubview(valLabel)
+
+        let handler = SliderHandler(valueLabel: valLabel, format: format, multiplier: multiplier, onChange: onChange)
         slider.target = handler
         slider.action = #selector(SliderHandler.slid(_:))
         objc_setAssociatedObject(slider, "handler", handler, .OBJC_ASSOCIATION_RETAIN)
-
         container.addSubview(slider)
-        return y - 30
+
+        return y - 28
+    }
+
+    private func addThinSeparator(in container: NSView, x: CGFloat, y: CGFloat, width: CGFloat) {
+        let sep = NSView(frame: NSRect(x: x, y: y, width: width, height: 1))
+        sep.wantsLayer = true
+        sep.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
+        container.addSubview(sep)
+    }
+
+    private func addThinSeparatorFlipped(in container: NSView, x: CGFloat, y: CGFloat, width: CGFloat) {
+        let sep = NSView(frame: NSRect(x: x, y: y, width: width, height: 1))
+        sep.wantsLayer = true
+        sep.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
+        container.addSubview(sep)
+    }
+
+    private func addSectionLabelFlipped(_ title: String, in container: NSView, x: CGFloat, y: CGFloat) -> CGFloat {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.textColor = .tertiaryLabelColor
+        label.frame = NSRect(x: x, y: y, width: 200, height: 12)
+        container.addSubview(label)
+        return y + 20
+    }
+}
+
+// MARK: - Toolbar Delegate
+
+extension PreferencesWindowController: NSToolbarDelegate {
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [kToolbarGeneral, kToolbarShortcuts, kToolbarAbout]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [kToolbarGeneral, kToolbarShortcuts, kToolbarAbout]
+    }
+
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [kToolbarGeneral, kToolbarShortcuts, kToolbarAbout]
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.target = self
+
+        switch itemIdentifier {
+        case kToolbarGeneral:
+            item.label = "General"
+            item.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "General")
+            item.action = #selector(selectGeneralTab)
+        case kToolbarShortcuts:
+            item.label = "Shortcuts"
+            item.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Shortcuts")
+            item.action = #selector(selectShortcutsTab)
+        case kToolbarAbout:
+            item.label = "About"
+            item.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "About")
+            item.action = #selector(selectAboutTab)
+        default:
+            return nil
+        }
+        return item
+    }
+
+    @objc private func selectGeneralTab() { switchToTab("general") }
+    @objc private func selectShortcutsTab() { switchToTab("shortcuts") }
+    @objc private func selectAboutTab() { switchToTab("about") }
+}
+
+// MARK: - Shortcut Key View
+
+private final class ShortcutKeyView: NSButton {
+    var onClick: (() -> Void)?
+    private var isRecording = false
+
+    init(binding: HotkeyBinding) {
+        super.init(frame: .zero)
+        title = binding.displayString
+        bezelStyle = .recessed
+        font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        isBordered = true
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        target = self
+        action = #selector(handleClick)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func update(binding: HotkeyBinding) {
+        title = binding.displayString
+        isRecording = false
+        contentTintColor = nil
+    }
+
+    func startRecordingMode() {
+        title = "Press shortcut\u{2026}"
+        isRecording = true
+        contentTintColor = .controlAccentColor
+    }
+
+    func stopRecordingMode() {
+        isRecording = false
+        contentTintColor = nil
+    }
+
+    @objc private func handleClick() {
+        onClick?()
     }
 }
 
 // MARK: - Shortcut Recorder
 
-/// Handles click-to-record for a shortcut button. When clicked, the button enters
-/// "recording" mode and captures the next key combination.
 private final class ShortcutButtonHandler: NSObject {
     let action: HotkeyAction
-    weak var button: NSButton?
+    weak var keyView: ShortcutKeyView?
     private var monitor: Any?
 
-    init(action: HotkeyAction, button: NSButton) {
+    init(action: HotkeyAction, keyView: ShortcutKeyView) {
         self.action = action
-        self.button = button
+        self.keyView = keyView
     }
 
-    @objc func clicked(_ sender: NSButton) {
-        // Enter recording mode
-        sender.title = "Press shortcut..."
-        sender.isHighlighted = true
+    func startRecording() {
+        keyView?.startRecordingMode()
 
-        // Listen for the next key event
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
 
             let keyCode = event.keyCode
             let flags = event.modifierFlags
 
-            // Escape cancels
             if keyCode == 53 {
                 self.cancelRecording()
                 return nil
             }
 
-            // Require at least one modifier (Ctrl, Opt, Cmd, Shift)
             let hasModifier = flags.contains(.control) || flags.contains(.option)
                 || flags.contains(.command) || flags.contains(.shift)
             guard hasModifier else { return nil }
 
-            // Convert NSEvent modifierFlags to CGEventFlags mask
             var cgMods: UInt = 0
             if flags.contains(.control) { cgMods |= UInt(CGEventFlags.maskControl.rawValue) }
             if flags.contains(.option) { cgMods |= UInt(CGEventFlags.maskAlternate.rawValue) }
@@ -559,15 +746,15 @@ private final class ShortcutButtonHandler: NSObject {
             let binding = HotkeyBinding(keyCode: keyCode, modifiers: cgMods)
             HotkeyPreferences.shared.setBinding(binding, for: self.action)
 
-            self.button?.title = binding.displayString
+            self.keyView?.update(binding: binding)
             self.stopRecording()
-            return nil // Consume the event
+            return nil
         }
     }
 
     private func cancelRecording() {
         let binding = HotkeyPreferences.shared.binding(for: action)
-        button?.title = binding.displayString
+        keyView?.update(binding: binding)
         stopRecording()
     }
 
@@ -576,7 +763,7 @@ private final class ShortcutButtonHandler: NSObject {
             NSEvent.removeMonitor(monitor)
         }
         monitor = nil
-        button?.isHighlighted = false
+        keyView?.stopRecordingMode()
     }
 
     deinit {
@@ -584,7 +771,58 @@ private final class ShortcutButtonHandler: NSObject {
     }
 }
 
+// MARK: - App Icon View
+
+private final class AppIconView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 2, dy: 2)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 18, yRadius: 18)
+
+        let gradient = NSGradient(colors: [
+            NSColor(hex: "#6366F1"),
+            NSColor(hex: "#8B5CF6"),
+            NSColor(hex: "#EC4899"),
+        ])
+        gradient?.draw(in: path, angle: -45)
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 28, weight: .bold),
+            .foregroundColor: NSColor.white,
+        ]
+        let text = "DS" as NSString
+        let textSize = text.size(withAttributes: attrs)
+        let textPoint = NSPoint(
+            x: rect.midX - textSize.width / 2,
+            y: rect.midY - textSize.height / 2
+        )
+        text.draw(at: textPoint, withAttributes: attrs)
+    }
+}
+
+// MARK: - Flipped View (for scroll content)
+
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 // MARK: - Action Handlers
+
+private final class SwitchHandler: NSObject {
+    let onChange: (Bool) -> Void
+    init(onChange: @escaping (Bool) -> Void) { self.onChange = onChange }
+
+    @objc func toggled(_ sender: NSSwitch) {
+        onChange(sender.state == .on)
+    }
+}
 
 private final class CheckboxHandler: NSObject {
     let onChange: (Bool) -> Void
@@ -597,16 +835,21 @@ private final class CheckboxHandler: NSObject {
 
 private final class SliderHandler: NSObject {
     let valueLabel: NSTextField
+    let format: String
+    let multiplier: Double
     let onChange: (Double) -> Void
 
-    init(valueLabel: NSTextField, onChange: @escaping (Double) -> Void) {
+    init(valueLabel: NSTextField, format: String = "%.2f", multiplier: Double = 1,
+         onChange: @escaping (Double) -> Void) {
         self.valueLabel = valueLabel
+        self.format = format
+        self.multiplier = multiplier
         self.onChange = onChange
     }
 
     @objc func slid(_ sender: NSSlider) {
         let val = sender.doubleValue
-        valueLabel.stringValue = String(format: "%.2f", val)
+        valueLabel.stringValue = String(format: format, val * multiplier)
         onChange(val)
     }
 }

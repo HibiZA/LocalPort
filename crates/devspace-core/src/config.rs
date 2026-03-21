@@ -1,25 +1,28 @@
 use crate::error::DevSpaceError;
 use crate::types::ProjectConfig;
+use crate::validation;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Global daemon configuration (~/.config/devspace/config.toml)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
+    #[serde(default = "default_tld")]
+    pub tld: String,
     #[serde(default)]
-    pub proxy: ProxyConfig,
+    pub caddy: CaddyConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
-    #[serde(default)]
-    pub editor: GlobalEditorConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyConfig {
+pub struct CaddyConfig {
     #[serde(default = "default_http_port")]
     pub http_port: u16,
-    #[serde(default = "default_bind_address")]
-    pub bind_address: String,
+    #[serde(default = "default_https_port")]
+    pub https_port: u16,
+    #[serde(default = "default_caddy_bin")]
+    pub bin: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,51 +31,50 @@ pub struct DaemonConfig {
     pub log_level: String,
     #[serde(default)]
     pub socket_path: Option<String>,
+    #[serde(default = "default_dns_port")]
+    pub dns_port: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GlobalEditorConfig {
-    #[serde(default = "default_preferred")]
-    pub preferred: String,
-    #[serde(default = "default_port_range")]
-    pub port_range: (u16, u16),
+fn default_tld() -> String {
+    "test".to_string()
 }
 
 fn default_http_port() -> u16 {
     8080
 }
 
-fn default_bind_address() -> String {
-    "127.0.0.1".to_string()
+fn default_https_port() -> u16 {
+    8443
+}
+
+fn default_caddy_bin() -> String {
+    "caddy".to_string()
 }
 
 fn default_log_level() -> String {
     "info".to_string()
 }
 
-fn default_preferred() -> String {
-    "auto".to_string()
-}
-
-fn default_port_range() -> (u16, u16) {
-    (4000, 4099)
+fn default_dns_port() -> u16 {
+    5553
 }
 
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
-            proxy: ProxyConfig::default(),
+            tld: default_tld(),
+            caddy: CaddyConfig::default(),
             daemon: DaemonConfig::default(),
-            editor: GlobalEditorConfig::default(),
         }
     }
 }
 
-impl Default for ProxyConfig {
+impl Default for CaddyConfig {
     fn default() -> Self {
         Self {
             http_port: default_http_port(),
-            bind_address: default_bind_address(),
+            https_port: default_https_port(),
+            bin: default_caddy_bin(),
         }
     }
 }
@@ -82,29 +84,49 @@ impl Default for DaemonConfig {
         Self {
             log_level: default_log_level(),
             socket_path: None,
-        }
-    }
-}
-
-impl Default for GlobalEditorConfig {
-    fn default() -> Self {
-        Self {
-            preferred: default_preferred(),
-            port_range: default_port_range(),
+            dns_port: default_dns_port(),
         }
     }
 }
 
 impl GlobalConfig {
+    /// Returns the path to the bundled caddy binary: ~/.config/devspace/bin/caddy
+    pub fn caddy_bin_path() -> PathBuf {
+        Self::config_dir().join("bin").join("caddy")
+    }
+
+    /// Resolve the caddy binary path: use bundled copy if it exists,
+    /// otherwise fall back to the configured bin (which may be on PATH).
+    pub fn resolve_caddy_bin(&self) -> String {
+        let bundled = Self::caddy_bin_path();
+        if bundled.exists() {
+            return bundled.to_string_lossy().to_string();
+        }
+        self.caddy.bin.clone()
+    }
+
+    pub fn validate(&self) -> Result<(), DevSpaceError> {
+        if !validation::is_valid_tld(&self.tld) {
+            return Err(DevSpaceError::Config(format!(
+                "invalid tld '{}': must contain only lowercase alphanumerics and hyphens",
+                self.tld
+            )));
+        }
+        Ok(())
+    }
+
     pub fn load() -> Result<Self, DevSpaceError> {
         let path = global_config_path();
-        if path.exists() {
+        let config = if path.exists() {
             let content = std::fs::read_to_string(&path).map_err(DevSpaceError::Io)?;
-            toml::from_str(&content)
-                .map_err(|e| DevSpaceError::Config(format!("failed to parse {}: {}", path.display(), e)))
+            toml::from_str(&content).map_err(|e| {
+                DevSpaceError::Config(format!("failed to parse {}: {}", path.display(), e))
+            })?
         } else {
-            Ok(Self::default())
-        }
+            Self::default()
+        };
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn socket_path(&self) -> PathBuf {
@@ -113,6 +135,14 @@ impl GlobalConfig {
         } else {
             default_socket_path()
         }
+    }
+
+    pub fn config_dir() -> PathBuf {
+        dirs_path("config").join("devspace")
+    }
+
+    pub fn caddyfile_path(&self) -> PathBuf {
+        Self::config_dir().join("Caddyfile")
     }
 }
 
@@ -134,6 +164,7 @@ pub fn global_config_path() -> PathBuf {
 }
 
 pub fn default_socket_path() -> PathBuf {
+    // SAFETY: getuid() is always safe — no preconditions, no side effects.
     let uid = unsafe { libc::getuid() };
     PathBuf::from(format!("/tmp/devspace-{}.sock", uid))
 }
@@ -160,32 +191,46 @@ mod tests {
     #[test]
     fn test_default_global_config() {
         let config = GlobalConfig::default();
-        assert_eq!(config.proxy.http_port, 8080);
-        assert_eq!(config.proxy.bind_address, "127.0.0.1");
+        assert_eq!(config.tld, "test");
+        assert_eq!(config.caddy.http_port, 8080);
+        assert_eq!(config.caddy.https_port, 8443);
+        assert_eq!(config.caddy.bin, "caddy");
         assert_eq!(config.daemon.log_level, "info");
-        assert_eq!(config.editor.preferred, "auto");
-        assert_eq!(config.editor.port_range, (4000, 4099));
+        assert_eq!(config.daemon.dns_port, 5553);
     }
 
     #[test]
     fn test_parse_global_config() {
         let toml_str = r#"
-[proxy]
+tld = "localhost"
+
+[caddy]
 http_port = 9090
-bind_address = "127.0.0.1"
+https_port = 9443
+bin = "/usr/local/bin/caddy"
 
 [daemon]
 log_level = "debug"
-
-[editor]
-preferred = "cursor"
-port_range = [5000, 5099]
+dns_port = 6000
 "#;
         let config: GlobalConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.proxy.http_port, 9090);
+        assert_eq!(config.tld, "localhost");
+        assert_eq!(config.caddy.http_port, 9090);
+        assert_eq!(config.caddy.https_port, 9443);
         assert_eq!(config.daemon.log_level, "debug");
-        assert_eq!(config.editor.preferred, "cursor");
-        assert_eq!(config.editor.port_range, (5000, 5099));
+        assert_eq!(config.daemon.dns_port, 6000);
+    }
+
+    #[test]
+    fn test_backward_compat_minimal_config() {
+        let toml_str = r#"
+[daemon]
+log_level = "debug"
+"#;
+        let config: GlobalConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.tld, "test");
+        assert_eq!(config.caddy.http_port, 8080);
+        assert_eq!(config.daemon.dns_port, 5553);
     }
 
     #[test]
@@ -194,20 +239,10 @@ port_range = [5000, 5099]
 [project]
 name = "my-app"
 hostname = "my-app"
-
-[dev]
-command = "npm run dev"
-port = 3000
-
-[editor]
-type = "cursor"
 "#;
         let config: ProjectConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.project.name, "my-app");
         assert_eq!(config.project.hostname, Some("my-app".to_string()));
-        assert_eq!(config.dev.command, Some("npm run dev".to_string()));
-        assert_eq!(config.dev.port, Some(3000));
-        assert_eq!(config.editor.r#type, "cursor");
     }
 
     #[test]
@@ -219,6 +254,5 @@ name = "minimal"
         let config: ProjectConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.project.name, "minimal");
         assert_eq!(config.project.hostname, None);
-        assert_eq!(config.dev.command, None);
     }
 }

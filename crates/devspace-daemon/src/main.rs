@@ -1,9 +1,8 @@
+mod caddy;
 mod daemon;
-mod editor;
+mod dns;
 mod ipc;
 mod port_watcher;
-mod process_manager;
-mod proxy;
 mod router;
 
 use anyhow::Result;
@@ -20,11 +19,7 @@ async fn main() -> Result<()> {
     let config = devspace_core::config::GlobalConfig::load()
         .map_err(|e| anyhow::anyhow!("failed to load config: {}", e))?;
 
-    tracing::info!(
-        "devspaced starting on {}:{}",
-        config.proxy.bind_address,
-        config.proxy.http_port
-    );
+    tracing::info!("devspaced starting (tld: .{})", config.tld);
 
     daemon::Daemon::run(config).await
 }

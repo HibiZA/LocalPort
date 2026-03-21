@@ -13,33 +13,43 @@ final class ProjectSettingsPanel: NSPanel {
     var onRemove: ((String) -> Void)?
 
     private let projectID: String
+    private let projectTLD: String
     private let nameField = NSTextField()
     private let hostnameField = NSTextField()
     private var selectedColor: String
     private var selectedLayout: LayoutPreset
     private var colorSwatches: [ColorSwatchView] = []
-    private var layoutButtons: [LayoutButton] = []
+    private var layoutCards: [LayoutCardView] = []
+    private var accentLine: NSView!
 
     private let colorPalette = [
         "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899",
         "#06B6D4", "#84CC16", "#F97316", "#6366F1",
     ]
 
+    private let panelW: CGFloat = 420
+    private let panelH: CGFloat = 440
+    private let inset: CGFloat = 24
+
     init(project: Project) {
         self.projectID = project.id
+        let lastComponent = project.hostname.components(separatedBy: ".").last ?? "test"
+        self.projectTLD = lastComponent.isEmpty ? "test" : lastComponent
         self.selectedColor = project.color.hex
         self.selectedLayout = project.layoutPreset ?? .codeFocus
 
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 420),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 440),
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
 
-        title = "Project Settings"
+        title = ""
         isMovableByWindowBackground = true
         level = .floating
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
         center()
 
         setupUI(project: project)
@@ -54,146 +64,170 @@ final class ProjectSettingsPanel: NSPanel {
         bg.state = .active
         contentView = bg
 
-        var y: CGFloat = 380
+        let contentW = panelW - inset * 2
 
-        // Name
-        y = addLabeledField("Name:", field: nameField, value: project.name, in: bg, y: y)
+        // Thin accent line at top edge
+        accentLine = NSView(frame: NSRect(x: 0, y: panelH - 2, width: panelW, height: 2))
+        accentLine.wantsLayer = true
+        accentLine.layer?.backgroundColor = NSColor(hex: selectedColor).cgColor
+        bg.addSubview(accentLine)
 
-        // Hostname
-        y = addHostnameRow(value: project.hostname, in: bg, y: y)
+        // --- Top section: name + hostname ---
+        // Leave room for titlebar drag area (~28px)
+        var y: CGFloat = panelH - 58
 
-        // Color
-        y -= 8
-        y = addColorRow(selected: project.color.hex, in: bg, y: y)
+        // Color dot + project name on same line
+        let dotSize: CGFloat = 10
+        let dot = NSView(frame: NSRect(x: inset, y: y + 9, width: dotSize, height: dotSize))
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = dotSize / 2
+        dot.layer?.backgroundColor = NSColor(hex: selectedColor).cgColor
+        bg.addSubview(dot)
 
-        // Layout
-        y -= 8
-        y = addLayoutRow(selected: project.layoutPreset ?? .codeFocus, in: bg, y: y)
+        let nameX = inset + dotSize + 8
+        let nameW = contentW - dotSize - 8
+        nameField.stringValue = project.name
+        nameField.isEditable = true
+        nameField.isBezeled = false
+        nameField.drawsBackground = false
+        nameField.font = .systemFont(ofSize: 20, weight: .semibold)
+        nameField.textColor = .labelColor
+        nameField.focusRingType = .none
+        nameField.frame = NSRect(x: nameX, y: y, width: nameW, height: 28)
+        bg.addSubview(nameField)
 
-        // Save button
-        y -= 16
-        let saveButton = NSButton(title: "Save", target: self, action: #selector(saveClicked))
-        saveButton.bezelStyle = .rounded
-        saveButton.controlSize = .large
-        saveButton.keyEquivalent = "\r"
-        saveButton.frame = NSRect(x: 130, y: y, width: 140, height: 32)
-        bg.addSubview(saveButton)
+        // Underline for name field
+        let nameUnderline = NSView(frame: NSRect(x: nameX, y: y - 1, width: nameW, height: 1))
+        nameUnderline.wantsLayer = true
+        nameUnderline.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.1).cgColor
+        bg.addSubview(nameUnderline)
 
-        // Separator
         y -= 28
-        let sep = NSBox(frame: NSRect(x: 30, y: y, width: 340, height: 1))
-        sep.boxType = .separator
-        bg.addSubview(sep)
 
-        // Remove button
-        y -= 32
-        let removeButton = NSButton(title: "Remove Project", target: self, action: #selector(removeClicked))
-        removeButton.bezelStyle = .rounded
-        removeButton.contentTintColor = .systemRed
-        removeButton.frame = NSRect(x: 130, y: y, width: 140, height: 28)
-        bg.addSubview(removeButton)
-    }
+        // Hostname row
+        let hostPrefix = NSTextField(labelWithString: "http://")
+        hostPrefix.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        hostPrefix.textColor = .tertiaryLabelColor
+        hostPrefix.sizeToFit()
+        hostPrefix.frame.origin = NSPoint(x: inset, y: y)
+        bg.addSubview(hostPrefix)
 
-    private func addLabeledField(_ label: String, field: NSTextField, value: String, in container: NSView, y: CGFloat) -> CGFloat {
-        let lbl = NSTextField(labelWithString: label)
-        lbl.font = .systemFont(ofSize: 13, weight: .medium)
-        lbl.frame = NSRect(x: 30, y: y, width: 80, height: 22)
-        container.addSubview(lbl)
-
-        field.stringValue = value
-        field.isEditable = true
-        field.isBezeled = true
-        field.bezelStyle = .roundedBezel
-        field.font = .systemFont(ofSize: 13)
-        field.frame = NSRect(x: 115, y: y, width: 250, height: 24)
-        container.addSubview(field)
-
-        return y - 36
-    }
-
-    private func addHostnameRow(value: String, in container: NSView, y: CGFloat) -> CGFloat {
-        let lbl = NSTextField(labelWithString: "Hostname:")
-        lbl.font = .systemFont(ofSize: 13, weight: .medium)
-        lbl.frame = NSRect(x: 30, y: y, width: 80, height: 22)
-        container.addSubview(lbl)
-
-        // Strip .localhost suffix for editing
-        let editable = value.replacingOccurrences(of: ".localhost", with: "")
+        let editable = project.hostname.components(separatedBy: ".").first ?? project.hostname
         hostnameField.stringValue = editable
         hostnameField.isEditable = true
-        hostnameField.isBezeled = true
-        hostnameField.bezelStyle = .roundedBezel
-        hostnameField.font = .systemFont(ofSize: 13)
-        hostnameField.frame = NSRect(x: 115, y: y, width: 180, height: 24)
-        container.addSubview(hostnameField)
+        hostnameField.isBezeled = false
+        hostnameField.drawsBackground = false
+        hostnameField.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        hostnameField.textColor = .secondaryLabelColor
+        hostnameField.focusRingType = .none
+        hostnameField.frame = NSRect(x: hostPrefix.frame.maxX, y: y, width: 140, height: 16)
+        bg.addSubview(hostnameField)
 
-        let suffix = NSTextField(labelWithString: ".localhost")
-        suffix.font = .systemFont(ofSize: 13)
-        suffix.textColor = .secondaryLabelColor
-        suffix.frame = NSRect(x: 298, y: y, width: 80, height: 22)
-        container.addSubview(suffix)
+        // Underline for hostname field
+        let hostUnderline = NSView(frame: NSRect(x: hostPrefix.frame.maxX, y: y - 2, width: 140, height: 1))
+        hostUnderline.wantsLayer = true
+        hostUnderline.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.1).cgColor
+        bg.addSubview(hostUnderline)
 
-        return y - 36
-    }
+        let hostSuffix = NSTextField(labelWithString: ".\(projectTLD)")
+        hostSuffix.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        hostSuffix.textColor = .tertiaryLabelColor
+        hostSuffix.sizeToFit()
+        hostSuffix.frame.origin = NSPoint(x: hostnameField.frame.maxX, y: y)
+        bg.addSubview(hostSuffix)
 
-    private func addColorRow(selected: String, in container: NSView, y: CGFloat) -> CGFloat {
-        let lbl = NSTextField(labelWithString: "Color:")
-        lbl.font = .systemFont(ofSize: 13, weight: .medium)
-        lbl.frame = NSRect(x: 30, y: y, width: 80, height: 22)
-        container.addSubview(lbl)
+        y -= 20
+        addSeparator(in: bg, y: y, width: contentW)
+
+        // --- Color section ---
+        y -= 28
+
+        let colorLabel = NSTextField(labelWithString: "COLOR")
+        colorLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        colorLabel.textColor = .tertiaryLabelColor
+        colorLabel.frame = NSRect(x: inset, y: y + 30, width: 60, height: 12)
+        bg.addSubview(colorLabel)
 
         let swatchSize: CGFloat = 24
-        let spacing: CGFloat = 8
-        var x: CGFloat = 115
+        let swatchSpacing: CGFloat = 6
+        let totalSwatchW = CGFloat(colorPalette.count) * swatchSize + CGFloat(colorPalette.count - 1) * swatchSpacing
+        var sx: CGFloat = inset + (contentW - totalSwatchW) / 2
 
         for hex in colorPalette {
             let swatch = ColorSwatchView(hex: hex, size: swatchSize)
-            swatch.frame = NSRect(x: x, y: y - 1, width: swatchSize, height: swatchSize)
-            swatch.isSelected = (hex.lowercased() == selected.lowercased())
+            swatch.frame = NSRect(x: sx, y: y, width: swatchSize, height: swatchSize)
+            swatch.isSelected = (hex.lowercased() == selectedColor.lowercased())
             swatch.onClick = { [weak self] clickedHex in
                 self?.selectColor(clickedHex)
             }
-            container.addSubview(swatch)
+            bg.addSubview(swatch)
             colorSwatches.append(swatch)
-            x += swatchSize + spacing
+            sx += swatchSize + swatchSpacing
         }
 
-        return y - 36
-    }
+        y -= 20
+        addSeparator(in: bg, y: y, width: contentW)
 
-    private func addLayoutRow(selected: LayoutPreset, in container: NSView, y: CGFloat) -> CGFloat {
-        let lbl = NSTextField(labelWithString: "Layout:")
-        lbl.font = .systemFont(ofSize: 13, weight: .medium)
-        lbl.frame = NSRect(x: 30, y: y, width: 80, height: 22)
-        container.addSubview(lbl)
+        // --- Layout section ---
+        y -= 12
+
+        let layoutLabel = NSTextField(labelWithString: "LAYOUT")
+        layoutLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        layoutLabel.textColor = .tertiaryLabelColor
+        layoutLabel.frame = NSRect(x: inset, y: y, width: 60, height: 12)
+        bg.addSubview(layoutLabel)
+
+        y -= 8
 
         let presets: [(LayoutPreset, String)] = [
             (.codeFocus, "Code"), (.previewFocus, "Preview"), (.equalSplit, "Equal"),
             (.stacked, "Stack"), (.pair, "Pair"), (.fullscreen, "Full"),
         ]
 
-        let buttonW: CGFloat = 52
-        let spacing: CGFloat = 4
-        var x: CGFloat = 115
+        let cols = 3
+        let cardSpacing: CGFloat = 8
+        let cardW = (contentW - CGFloat(cols - 1) * cardSpacing) / CGFloat(cols)
+        let cardH: CGFloat = 72
 
         for (i, (preset, label)) in presets.enumerated() {
-            if i == 3 {
-                x = 115
-            }
-            let rowY = (i < 3) ? y : y - 30
+            let col = i % cols
+            let row = i / cols
+            let cx = inset + CGFloat(col) * (cardW + cardSpacing)
+            let cy = y - cardH - CGFloat(row) * (cardH + cardSpacing)
 
-            let btn = LayoutButton(preset: preset, label: label)
-            btn.frame = NSRect(x: x, y: rowY, width: buttonW, height: 24)
-            btn.isSelected = (preset == selected)
-            btn.onClick = { [weak self] clickedPreset in
+            let card = LayoutCardView(preset: preset, label: label, projectColor: selectedColor)
+            card.frame = NSRect(x: cx, y: cy, width: cardW, height: cardH)
+            card.isSelected = (preset == selectedLayout)
+            card.onClick = { [weak self] clickedPreset in
                 self?.selectLayout(clickedPreset)
             }
-            container.addSubview(btn)
-            layoutButtons.append(btn)
-            x += buttonW + spacing
+            bg.addSubview(card)
+            layoutCards.append(card)
         }
 
-        return y - 68
+        // --- Bottom actions ---
+        let bottomY: CGFloat = 20
+
+        let removeButton = NSButton(title: "Remove", target: self, action: #selector(removeClicked))
+        removeButton.bezelStyle = .rounded
+        removeButton.contentTintColor = NSColor.systemRed.withAlphaComponent(0.7)
+        removeButton.frame = NSRect(x: inset, y: bottomY, width: 80, height: 28)
+        bg.addSubview(removeButton)
+
+        let saveButton = NSButton(title: "Save", target: self, action: #selector(saveClicked))
+        saveButton.bezelStyle = .rounded
+        saveButton.controlSize = .large
+        saveButton.keyEquivalent = "\r"
+        let saveW: CGFloat = 100
+        saveButton.frame = NSRect(x: panelW - inset - saveW, y: bottomY, width: saveW, height: 32)
+        bg.addSubview(saveButton)
+    }
+
+    private func addSeparator(in container: NSView, y: CGFloat, width: CGFloat) {
+        let sep = NSView(frame: NSRect(x: inset, y: y, width: width, height: 1))
+        sep.wantsLayer = true
+        sep.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
+        container.addSubview(sep)
     }
 
     // MARK: - Selection
@@ -203,12 +237,26 @@ final class ProjectSettingsPanel: NSPanel {
         for swatch in colorSwatches {
             swatch.isSelected = (swatch.hex.lowercased() == hex.lowercased())
         }
+        for card in layoutCards {
+            card.projectColor = hex
+            card.needsDisplay = true
+        }
+        // Update dot
+        if let dot = contentView?.subviews.first(where: {
+            $0.layer?.cornerRadius == 5 && $0.frame.size.width == 10
+        }) {
+            dot.layer?.backgroundColor = NSColor(hex: hex).cgColor
+        }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            accentLine.animator().layer?.backgroundColor = NSColor(hex: hex).cgColor
+        }
     }
 
     private func selectLayout(_ preset: LayoutPreset) {
         selectedLayout = preset
-        for btn in layoutButtons {
-            btn.isSelected = (btn.preset == preset)
+        for card in layoutCards {
+            card.isSelected = (card.preset == preset)
         }
     }
 
@@ -216,8 +264,8 @@ final class ProjectSettingsPanel: NSPanel {
 
     @objc private func saveClicked() {
         let hostname = hostnameField.stringValue.isEmpty
-            ? nameField.stringValue + ".localhost"
-            : hostnameField.stringValue + ".localhost"
+            ? nameField.stringValue + "." + projectTLD
+            : hostnameField.stringValue + "." + projectTLD
 
         let settings = ProjectSettings(
             name: nameField.stringValue,
@@ -272,16 +320,19 @@ private final class ColorSwatchView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        let radius: CGFloat = bounds.width / 2
-        let path = NSBezierPath(ovalIn: bounds.insetBy(dx: 2, dy: 2))
-        swatchColor.setFill()
-        path.fill()
-
         if isSelected {
-            NSColor.white.setStroke()
-            let ring = NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 1))
-            ring.lineWidth = 2.0
+            let path = NSBezierPath(ovalIn: bounds.insetBy(dx: 3, dy: 3))
+            swatchColor.setFill()
+            path.fill()
+
+            swatchColor.withAlphaComponent(0.4).setStroke()
+            let ring = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5))
+            ring.lineWidth = 1.5
             ring.stroke()
+        } else {
+            let path = NSBezierPath(ovalIn: bounds.insetBy(dx: 4, dy: 4))
+            swatchColor.setFill()
+            path.fill()
         }
     }
 
@@ -290,29 +341,32 @@ private final class ColorSwatchView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        layer?.opacity = 0.8
+        if !isSelected { animator().alphaValue = 0.7 }
     }
 
     override func mouseExited(with event: NSEvent) {
-        layer?.opacity = 1.0
+        animator().alphaValue = 1.0
     }
 }
 
-// MARK: - Layout Button
+// MARK: - Layout Card View
 
-private final class LayoutButton: NSView {
+private final class LayoutCardView: NSView {
     let preset: LayoutPreset
     var isSelected: Bool = false { didSet { needsDisplay = true } }
     var onClick: ((LayoutPreset) -> Void)?
+    var projectColor: String = "#3B82F6"
 
     private let label: String
 
-    init(preset: LayoutPreset, label: String) {
+    init(preset: LayoutPreset, label: String, projectColor: String) {
         self.preset = preset
         self.label = label
+        self.projectColor = projectColor
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 6
+        layer?.cornerRadius = 8
+        layer?.cornerCurve = .continuous
 
         addTrackingArea(NSTrackingArea(
             rect: .zero,
@@ -326,25 +380,108 @@ private final class LayoutButton: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
+        let accentColor = NSColor(hex: projectColor)
+
         if isSelected {
-            NSColor.controlAccentColor.withAlphaComponent(0.2).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
-            NSColor.controlAccentColor.setStroke()
-            let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 5.5, yRadius: 5.5)
-            border.lineWidth = 1.5
+            accentColor.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+            accentColor.withAlphaComponent(0.5).setStroke()
+            let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7.5, yRadius: 7.5)
+            border.lineWidth = 1
             border.stroke()
         } else {
-            NSColor.quaternaryLabelColor.withAlphaComponent(0.2).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+            NSColor.white.withAlphaComponent(0.04).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
         }
 
+        // Wireframe thumbnail
+        let thumbW: CGFloat = bounds.width - 16
+        let thumbH: CGFloat = 36
+        let thumbX: CGFloat = 8
+        let thumbY: CGFloat = bounds.height - thumbH - 10
+        drawMiniLayout(in: NSRect(x: thumbX, y: thumbY, width: thumbW, height: thumbH),
+                       selected: isSelected, accent: accentColor)
+
+        // Label
+        let textColor = isSelected ? accentColor : NSColor.secondaryLabelColor
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11, weight: isSelected ? .semibold : .regular),
-            .foregroundColor: isSelected ? NSColor.controlAccentColor : NSColor.labelColor,
+            .font: NSFont.systemFont(ofSize: 10, weight: isSelected ? .semibold : .regular),
+            .foregroundColor: textColor,
         ]
-        let size = (label as NSString).size(withAttributes: attrs)
-        let point = NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
-        (label as NSString).draw(at: point, withAttributes: attrs)
+        let textSize = (label as NSString).size(withAttributes: attrs)
+        let textX = (bounds.width - textSize.width) / 2
+        (label as NSString).draw(at: NSPoint(x: textX, y: 6), withAttributes: attrs)
+    }
+
+    private func drawMiniLayout(in rect: NSRect, selected: Bool, accent: NSColor) {
+        let wireColor = selected ? accent.withAlphaComponent(0.6) : NSColor.white.withAlphaComponent(0.2)
+        let fillColor = selected ? accent.withAlphaComponent(0.08) : NSColor.white.withAlphaComponent(0.04)
+        let highlightFill = selected ? accent.withAlphaComponent(0.15) : NSColor.white.withAlphaComponent(0.06)
+        let gap: CGFloat = 2
+
+        // Outer frame
+        fillColor.setFill()
+        wireColor.setStroke()
+        let box = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
+        box.lineWidth = 0.75
+        box.fill()
+        box.stroke()
+
+        switch preset {
+        case .codeFocus:
+            let splitX = rect.minX + rect.width * 0.65
+            drawVLine(x: splitX, rect: rect, gap: gap, color: wireColor)
+            highlightFill.setFill()
+            NSBezierPath(rect: NSRect(x: rect.minX + 1, y: rect.minY + 1,
+                                      width: splitX - rect.minX - 1.5, height: rect.height - 2)).fill()
+
+        case .previewFocus:
+            let splitX = rect.minX + rect.width * 0.35
+            drawVLine(x: splitX, rect: rect, gap: gap, color: wireColor)
+            highlightFill.setFill()
+            NSBezierPath(rect: NSRect(x: splitX + 0.5, y: rect.minY + 1,
+                                      width: rect.maxX - splitX - 1, height: rect.height - 2)).fill()
+
+        case .equalSplit:
+            for i in 1...2 {
+                let x = rect.minX + rect.width * CGFloat(i) / 3
+                drawVLine(x: x, rect: rect, gap: gap, color: wireColor)
+            }
+
+        case .stacked:
+            let splitY1 = rect.minY + rect.height * 0.33
+            let splitY2 = rect.minY + rect.height * 0.66
+            drawHLine(y: splitY1, rect: rect, gap: gap, color: wireColor)
+            drawHLine(y: splitY2, rect: rect, gap: gap, color: wireColor)
+            highlightFill.setFill()
+            NSBezierPath(rect: NSRect(x: rect.minX + 1, y: splitY2 + 0.5,
+                                      width: rect.width - 2, height: rect.maxY - splitY2 - 1)).fill()
+
+        case .pair:
+            drawVLine(x: rect.midX, rect: rect, gap: gap, color: wireColor)
+
+        case .fullscreen:
+            highlightFill.setFill()
+            NSBezierPath(rect: rect.insetBy(dx: 1, dy: 1)).fill()
+        }
+    }
+
+    private func drawVLine(x: CGFloat, rect: NSRect, gap: CGFloat, color: NSColor) {
+        color.setStroke()
+        let line = NSBezierPath()
+        line.move(to: NSPoint(x: x, y: rect.minY + gap))
+        line.line(to: NSPoint(x: x, y: rect.maxY - gap))
+        line.lineWidth = 0.75
+        line.stroke()
+    }
+
+    private func drawHLine(y: CGFloat, rect: NSRect, gap: CGFloat, color: NSColor) {
+        color.setStroke()
+        let line = NSBezierPath()
+        line.move(to: NSPoint(x: rect.minX + gap, y: y))
+        line.line(to: NSPoint(x: rect.maxX - gap, y: y))
+        line.lineWidth = 0.75
+        line.stroke()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -353,7 +490,7 @@ private final class LayoutButton: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         if !isSelected {
-            layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.3).cgColor
+            layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
         }
     }
 

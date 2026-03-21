@@ -17,14 +17,8 @@ pub enum DevSpaceError {
     #[error("ipc error: {0}")]
     Ipc(String),
 
-    #[error("process error: {0}")]
-    Process(String),
-
     #[error("proxy error: {0}")]
     Proxy(String),
-
-    #[error("port {0} is already in use")]
-    PortInUse(u16),
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

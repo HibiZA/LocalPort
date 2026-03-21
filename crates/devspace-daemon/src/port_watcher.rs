@@ -10,6 +10,7 @@ use tokio::time::{interval, Duration};
 pub struct PortWatcher {
     router: Arc<RwLock<Router>>,
     projects: Arc<RwLock<ProjectRegistry>>,
+    tld: String,
     interval: Duration,
 }
 
@@ -26,12 +27,8 @@ impl ProjectRegistry {
         self.projects.insert(directory, name);
     }
 
-    pub fn unregister(&mut self, directory: &PathBuf) -> Option<String> {
-        self.projects.remove(directory)
-    }
-
     /// Find which project owns the given directory (checks if dir starts with any project dir).
-    pub fn find_project_for_dir(&self, dir: &PathBuf) -> Option<&str> {
+    pub fn find_project_for_dir(&self, dir: &std::path::Path) -> Option<&str> {
         for (project_dir, name) in &self.projects {
             if dir.starts_with(project_dir) {
                 return Some(name.as_str());
@@ -58,10 +55,12 @@ impl PortWatcher {
     pub fn new(
         router: Arc<RwLock<Router>>,
         projects: Arc<RwLock<ProjectRegistry>>,
+        tld: String,
     ) -> Self {
         Self {
             router,
             projects,
+            tld,
             interval: Duration::from_secs(2),
         }
     }
@@ -88,7 +87,6 @@ impl PortWatcher {
 
     async fn scan(&self, active_routes: &mut HashMap<u16, String>) -> anyhow::Result<()> {
         let listeners = discover_listeners().await?;
-        let projects = self.projects.read().await;
 
         // Track which ports are still active
         let mut seen_ports = std::collections::HashSet::new();
@@ -103,11 +101,19 @@ impl PortWatcher {
 
             // Try to find the working directory of this PID
             if let Some(cwd) = get_pid_cwd(listener.pid).await {
-                if let Some(project_name) = projects.find_project_for_dir(&cwd) {
-                    let hostname = format!("{}.localhost", project_name);
-                    let addr = format!("127.0.0.1:{}", listener.port)
+                // Hold the projects lock only briefly to check membership
+                let project_name = self
+                    .projects
+                    .read()
+                    .await
+                    .find_project_for_dir(&cwd)
+                    .map(|s| s.to_string());
+
+                if let Some(project_name) = project_name {
+                    let hostname = format!("{}.{}", project_name, self.tld);
+                    let addr: std::net::SocketAddr = format!("127.0.0.1:{}", listener.port)
                         .parse()
-                        .unwrap();
+                        .expect("hardcoded 127.0.0.1 with valid port always parses");
 
                     self.router.write().await.add_route(hostname.clone(), addr);
                     active_routes.insert(listener.port, hostname);
@@ -168,7 +174,7 @@ async fn discover_listeners() -> anyhow::Result<Vec<ListeningPort>> {
 /// Get the working directory of a process by PID (macOS).
 async fn get_pid_cwd(pid: u32) -> Option<PathBuf> {
     let output = Command::new("lsof")
-        .args(["-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+        .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
         .output()
         .await
         .ok()?;

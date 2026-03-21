@@ -150,27 +150,27 @@ final class ProjectSwitcher {
 
         switch action {
         case .cycleNext:
-            DispatchQueue.main.async { self.cycleNext() }
+            DispatchQueue.main.async { [weak self] in self?.cycleNext() }
         case .toggleLast:
-            DispatchQueue.main.async { self.toggleLast() }
+            DispatchQueue.main.async { [weak self] in self?.toggleLast() }
         case .switchProject1:
-            DispatchQueue.main.async { self.switchTo(index: 0) }
+            DispatchQueue.main.async { [weak self] in self?.switchTo(index: 0) }
         case .switchProject2:
-            DispatchQueue.main.async { self.switchTo(index: 1) }
+            DispatchQueue.main.async { [weak self] in self?.switchTo(index: 1) }
         case .switchProject3:
-            DispatchQueue.main.async { self.switchTo(index: 2) }
+            DispatchQueue.main.async { [weak self] in self?.switchTo(index: 2) }
         case .switchProject4:
-            DispatchQueue.main.async { self.switchTo(index: 3) }
+            DispatchQueue.main.async { [weak self] in self?.switchTo(index: 3) }
         case .switchProject5:
-            DispatchQueue.main.async { self.switchTo(index: 4) }
+            DispatchQueue.main.async { [weak self] in self?.switchTo(index: 4) }
         case .switchProject6:
-            DispatchQueue.main.async { self.switchTo(index: 5) }
+            DispatchQueue.main.async { [weak self] in self?.switchTo(index: 5) }
         case .switchProject7:
-            DispatchQueue.main.async { self.switchTo(index: 6) }
+            DispatchQueue.main.async { [weak self] in self?.switchTo(index: 6) }
         case .switchProject8:
-            DispatchQueue.main.async { self.switchTo(index: 7) }
+            DispatchQueue.main.async { [weak self] in self?.switchTo(index: 7) }
         case .switchProject9:
-            DispatchQueue.main.async { self.switchTo(index: 8) }
+            DispatchQueue.main.async { [weak self] in self?.switchTo(index: 8) }
         }
 
         return nil // Consume the event

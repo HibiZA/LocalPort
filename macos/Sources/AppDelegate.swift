@@ -12,7 +12,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let projectSwitcher = ProjectSwitcher()
     let menuBarController = MenuBarController()
     let daemonClient = DaemonClient()
-    let projectLauncher = ProjectLauncher()
     let spaceManager = SpaceManager()
     let switchHUD = SwitchHUD()
 
@@ -20,12 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var projects: [Project] = []
     private var screenBorder: ScreenBorderWindow?
     private var borderUpdateTimer: Timer?
-
-    // Track launched PIDs so we can force-associate windows with projects
-    private var launchedPIDs: [String: Set<pid_t>] = [:] // projectID -> PIDs
-
-    // Pre-computed target frames for each window role per project
-    private var launchedFrames: [String: [WindowRole: CGRect]] = [:] // projectID -> role -> frame
+    private var daemonProcess: Process?
 
     // Default color palette
     private let colorPalette = [
@@ -39,6 +33,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Hide dock icon — we're a menu bar app
         NSApp.setActivationPolicy(.accessory)
+
+        // Request notification permissions (requires a valid app bundle)
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+                if let error = error {
+                    logger.error("Notification auth error: \(error)")
+                }
+                logger.info("Notification permission granted: \(granted)")
+            }
+        }
 
         // Set up menu bar first (always visible)
         menuBarController.delegate = self
@@ -113,18 +117,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         projectSwitcher.stop()
         borderUpdateTimer?.invalidate()
         daemonClient.disconnect()
+        stopBundledDaemon()
         removeAllBorders()
     }
 
     // MARK: - Daemon Connection
 
     private func connectToDaemon() {
-        do {
-            try daemonClient.connect()
-            refreshProjectsFromDaemon()
-        } catch {
-            logger.warning("Could not connect to daemon: \(error). Running in standalone mode.")
+        // Start bundled daemon if not already running
+        startBundledDaemon()
+
+        // Give daemon a moment to start, then connect
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            do {
+                try self?.daemonClient.connect()
+                self?.refreshProjectsFromDaemon()
+            } catch {
+                logger.warning("Could not connect to daemon: \(error). Running in standalone mode.")
+            }
         }
+    }
+
+    private func startBundledDaemon() {
+        // Look for devspaced in the app bundle's Helpers directory
+        let bundlePath = Bundle.main.bundlePath
+        let helperPath = bundlePath + "/Contents/Helpers/devspaced"
+
+        guard FileManager.default.fileExists(atPath: helperPath) else {
+            logger.info("No bundled daemon found at \(helperPath), expecting external daemon")
+            return
+        }
+
+        // Check if daemon is already running (socket exists)
+        let uid = getuid()
+        let socketPath = "/tmp/devspace-\(uid).sock"
+        if FileManager.default.fileExists(atPath: socketPath) {
+            logger.info("Daemon socket already exists, skipping launch")
+            return
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: helperPath)
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            daemonProcess = process
+            logger.info("Started bundled daemon (PID \(process.processIdentifier))")
+        } catch {
+            logger.error("Failed to start bundled daemon: \(error)")
+        }
+    }
+
+    private func stopBundledDaemon() {
+        guard let process = daemonProcess, process.isRunning else { return }
+        process.interrupt() // SIGINT
+        logger.info("Sent interrupt to bundled daemon (PID \(process.processIdentifier))")
+        daemonProcess = nil
     }
 
     private func refreshProjectsFromDaemon() {
@@ -146,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func syncProjectsFromRoutes(_ routes: [[String: Any]]) {
         for route in routes {
             guard let hostname = route["hostname"] as? String else { continue }
-            let projectName = hostname.replacingOccurrences(of: ".localhost", with: "")
+            let projectName = hostname.components(separatedBy: ".").first ?? hostname
 
             if !projects.contains(where: { $0.id == projectName }) {
                 let colorIndex = projects.count % colorPalette.count
@@ -174,18 +224,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleDaemonEvent(method: String, params: [String: Any]) {
         switch method {
-        case "process.exited":
-            guard let projectID = params["project_id"] as? String,
-                  let code = params["code"] as? Int else { return }
-
-            if projectSwitcher.activeProject?.id != projectID {
-                menuBarController.addNotification(for: projectID)
-                sendSystemNotification(
-                    title: "[\(projectID)] Process exited",
-                    body: "Process exited with code \(code)"
-                )
-            }
-
         case "port.detected":
             refreshProjectsFromDaemon()
 
@@ -197,25 +235,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Project Management
 
     func addProject(directory: String, layoutPreset: LayoutPreset = .codeFocus) {
-        // If this project directory is already registered, just launch/switch to it
+        // If this project directory is already registered, just switch to it
         if let existing = projects.first(where: { $0.directory == directory }) {
-            logger.info("Project \(existing.name) already exists, launching")
-            launchProject(existing)
+            logger.info("Project \(existing.name) already exists, switching")
             projectSwitcher.switchTo(projectID: existing.id)
             return
         }
 
-        let detector = ProjectDetector()
-        let info = detector.detect(directory: directory)
-
-        let name = info.name
+        let dirName = (directory as NSString).lastPathComponent
         let colorIndex = projects.count % colorPalette.count
 
         var project = Project(
-            id: name,
-            name: name,
+            id: dirName,
+            name: dirName,
             directory: directory,
-            hostname: "\(name).localhost",
+            hostname: "\(dirName).test",
             color: NSColorWrapper(hex: colorPalette[colorIndex]),
             layoutPreset: layoutPreset
         )
@@ -242,9 +276,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowTracker.updateProjects(projects)
         updateMenuBar()
         saveProjects()
-
-        // Launch the project: open IDE, start dev server, open browser
-        launchProject(project)
     }
 
     func updateProject(_ projectID: String, settings: ProjectSettings) {
@@ -269,8 +300,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func removeProject(_ projectID: String) {
         projects.removeAll { $0.id == projectID }
-        launchedPIDs.removeValue(forKey: projectID)
-        launchedFrames.removeValue(forKey: projectID)
 
         projectSwitcher.updateProjects(projects)
         windowTracker.updateProjects(projects)
@@ -305,92 +334,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func launchProject(_ project: Project) {
-        // Pre-compute target frames BEFORE launching apps
-        let preset = project.layoutPreset ?? .codeFocus
-        let frames = layoutManager.computeFrames(preset: preset)
-        launchedFrames[project.id] = frames
-        logger.info("Pre-computed \(frames.count) frame(s) for \(project.id, privacy: .public) preset: \(preset.rawValue, privacy: .public)")
-
-        // Create a new desktop Space for this project
-        let spaceID = spaceManager.createSpaceForProject(project.id)
-        spaceManager.switchToSpace(spaceID)
-
-        // Minimize all non-DevSpace windows to clear the desktop for the new project
-        spaceManager.minimizeNonProjectWindows()
-
-        projectLauncher.launch(directory: project.directory) { [weak self] launched in
-            guard let self = self else { return }
-
-            // Track all PIDs from the launch so WindowTracker can associate them
-            var pids = Set<pid_t>()
-            if let pid = launched.idePID { pids.insert(pid) }
-            if let pid = launched.terminalPID { pids.insert(pid) }
-            if let pid = launched.browserPID { pids.insert(pid) }
-
-            // Also add ALL PIDs for each app's bundle ID — some apps (e.g. Ghostty)
-            // have multiple processes, and CGWindowList may report a different PID
-            // than NSWorkspace.runningApplications.first
-            let prefs = UserAppPreferences.shared
-            for bundleID in [prefs.preferredIDE?.id, prefs.preferredTerminal?.id, prefs.preferredBrowser?.id].compactMap({ $0 }) {
-                for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == bundleID {
-                    pids.insert(app.processIdentifier)
-                }
-            }
-
-            self.launchedPIDs[project.id] = pids
-
-            // Force-claim windows and tile them — two passes to catch late-arriving windows
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                self.claimWindowsForLaunchedPIDs(projectID: project.id)
-            }
-            // Second pass for apps that take longer to create windows
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                self.claimWindowsForLaunchedPIDs(projectID: project.id)
-            }
-
-            logger.info("Project \(project.name, privacy: .public) launched — PIDs: \(pids.map { Int($0) }, privacy: .public)")
-        }
-    }
-
-    /// After launching apps for a project, claim their windows and position them immediately
-    private func claimWindowsForLaunchedPIDs(projectID: String) {
-        guard let pids = launchedPIDs[projectID] else { return }
-        let frames = launchedFrames[projectID] ?? [:]
-
-        logger.info("Claiming windows for \(projectID, privacy: .public) — PIDs: \(pids.map { Int($0) }, privacy: .public), frames: \(frames.count)")
-        logger.info("WindowTracker has \(self.windowTracker.trackedWindows.count) tracked window(s)")
-
-        var claimedWindowIDs: [CGWindowID] = []
-
-        for (windowID, window) in windowTracker.trackedWindows {
-            let pidMatch = pids.contains(window.ownerPID)
-            let projNil = window.projectID == nil
-            logger.info("  Window \(windowID): \(window.appName, privacy: .public) (PID \(window.ownerPID), role: \(window.windowRole.rawValue, privacy: .public), project: \(window.projectID ?? "none", privacy: .public), pidMatch: \(pidMatch), projNil: \(projNil))")
-            if pidMatch && projNil {
-                windowTracker.claimWindow(windowID, forProject: projectID)
-                claimedWindowIDs.append(windowID)
-
-                // Position immediately using pre-computed frame for this role
-                if let frame = frames[window.windowRole] {
-                    layoutManager.moveWindow(window, to: frame)
-                    logger.info("  → Claimed + positioned \(window.appName, privacy: .public) as \(window.windowRole.rawValue, privacy: .public)")
-                } else {
-                    logger.info("  → Claimed \(window.appName, privacy: .public) (no frame for role \(window.windowRole.rawValue, privacy: .public))")
-                }
-            }
-        }
-
-        // Move claimed windows to the project's Space
-        if !claimedWindowIDs.isEmpty {
-            spaceManager.moveWindowsToProjectSpace(windowIDs: claimedWindowIDs, projectID: projectID)
-            projectSwitcher.switchTo(projectID: projectID)
-        }
-
-        updateBorders()
-        updateMenuBar()
-    }
-
     // MARK: - Border Management
 
     private func updateBorders() {
@@ -404,6 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let existing = screenBorder {
             existing.updateColor(color)
             existing.updateFrame()
+            existing.refreshFromPreferences()
         } else {
             let border = ScreenBorderWindow(color: color)
             border.animateIn()
@@ -457,27 +401,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: WindowTrackerDelegate {
     func windowTracker(_ tracker: WindowTracker, didUpdateWindows windows: [TrackedWindow]) {
-        // Claim and immediately position any new windows matching launched PIDs
-        var newlyClaimed: [String: [CGWindowID]] = [:] // projectID -> windowIDs
-        for (projectID, pids) in launchedPIDs {
-            let frames = launchedFrames[projectID] ?? [:]
-            for window in windows {
-                if pids.contains(window.ownerPID) && window.projectID == nil {
-                    tracker.claimWindow(window.windowID, forProject: projectID)
-                    newlyClaimed[projectID, default: []].append(window.windowID)
-                    // Position immediately using pre-computed frame
-                    if let frame = frames[window.windowRole] {
-                        layoutManager.moveWindow(window, to: frame)
-                    }
-                }
-            }
-        }
-
-        // Register newly claimed windows with SpaceManager
-        for (projectID, windowIDs) in newlyClaimed {
-            spaceManager.moveWindowsToProjectSpace(windowIDs: windowIDs, projectID: projectID)
-        }
-
         updateBorders()
         updateMenuBar()
     }
@@ -529,11 +452,6 @@ extension AppDelegate: ProjectSwitcherDelegate {
 
 extension AppDelegate: MenuBarControllerDelegate {
     func menuBarDidSelectProject(_ projectID: String) {
-        // If the project has no tracked windows, re-launch it
-        let windows = windowTracker.windows(for: projectID)
-        if windows.isEmpty, let project = projects.first(where: { $0.id == projectID }) {
-            launchProject(project)
-        }
         projectSwitcher.switchTo(projectID: projectID)
     }
 

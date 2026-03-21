@@ -37,19 +37,26 @@ final class ScreenBorderWindow: NSWindow {
         setFrame(screen.frame, display: true)
     }
 
-    func animateIn(duration: TimeInterval = 0.2) {
+    /// Re-read preferences and redraw
+    func refreshFromPreferences() {
+        borderView.refreshFromPreferences()
+    }
+
+    func animateIn(duration: TimeInterval? = nil) {
+        let dur = duration ?? AppPreferences.shared.animationDuration
         alphaValue = 0
         orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = duration
+            ctx.duration = dur
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             self.animator().alphaValue = 1.0
         }
     }
 
-    func animateOut(duration: TimeInterval = 0.2, completion: (() -> Void)? = nil) {
+    func animateOut(duration: TimeInterval? = nil, completion: (() -> Void)? = nil) {
+        let dur = duration ?? AppPreferences.shared.animationDuration
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = duration
+            ctx.duration = dur
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             self.animator().alphaValue = 0.0
         }, completionHandler: {
@@ -64,7 +71,6 @@ final class ScreenBorderWindow: NSWindow {
 private final class ScreenBorderView: NSView {
     private var color: NSColor
     private let cornerRadius: CGFloat = 12.0
-    private let glowSpread: CGFloat = 18.0
 
     init(color: NSColor) {
         self.color = color
@@ -81,36 +87,48 @@ private final class ScreenBorderView: NSView {
         layer?.setNeedsDisplay()
     }
 
+    func refreshFromPreferences() {
+        layer?.setNeedsDisplay()
+    }
+
     override func updateLayer() {
         guard let layer = self.layer else { return }
 
         layer.sublayers?.forEach { $0.removeFromSuperlayer() }
 
+        let prefs = AppPreferences.shared
+
+        // If glow is disabled, don't draw anything
+        guard prefs.borderGlow else { return }
+
+        let borderWidth = prefs.borderWidth
+        let glowSpread = borderWidth * 6  // scale glow relative to border width
+
         let inset = glowSpread / 2
         let glowRect = bounds.insetBy(dx: inset, dy: inset)
         let path = CGPath(roundedRect: glowRect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
 
-        // Soft diffused hue — no solid line, just a blurred edge glow
+        // Soft diffused hue
         let glowLayer = CAShapeLayer()
         glowLayer.path = path
         glowLayer.fillColor = nil
         glowLayer.strokeColor = color.withAlphaComponent(0.35).cgColor
         glowLayer.lineWidth = glowSpread
 
-        if let blur = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: 14.0]) {
+        if let blur = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: glowSpread * 0.8]) {
             glowLayer.filters = [blur]
         }
 
         layer.addSublayer(glowLayer)
 
-        // Second pass — tighter, slightly brighter core for definition
+        // Tighter core for definition
         let coreLayer = CAShapeLayer()
         coreLayer.path = path
         coreLayer.fillColor = nil
         coreLayer.strokeColor = color.withAlphaComponent(0.18).cgColor
-        coreLayer.lineWidth = 6.0
+        coreLayer.lineWidth = borderWidth * 2
 
-        if let blur = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: 6.0]) {
+        if let blur = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: borderWidth * 2]) {
             coreLayer.filters = [blur]
         }
 
@@ -118,4 +136,59 @@ private final class ScreenBorderView: NSView {
     }
 
     override var wantsUpdateLayer: Bool { true }
+}
+
+// MARK: - Dim Overlay
+
+/// A full-screen dark overlay used to dim windows not in the active project.
+final class DimOverlayWindow: NSWindow {
+
+    init() {
+        let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080)
+
+        super.init(
+            contentRect: screenFrame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+
+        self.isOpaque = false
+        self.backgroundColor = NSColor.black.withAlphaComponent(AppPreferences.shared.dimOpacity)
+        self.level = .normal
+        self.ignoresMouseEvents = true
+        self.hasShadow = false
+        self.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        self.animationBehavior = .none
+    }
+
+    func updateOpacity() {
+        backgroundColor = NSColor.black.withAlphaComponent(AppPreferences.shared.dimOpacity)
+    }
+
+    func updateFrame() {
+        guard let screen = NSScreen.main else { return }
+        setFrame(screen.frame, display: true)
+    }
+
+    func fadeIn(duration: TimeInterval? = nil) {
+        let dur = duration ?? AppPreferences.shared.animationDuration
+        alphaValue = 0
+        orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = dur
+            self.animator().alphaValue = 1.0
+        }
+    }
+
+    func fadeOut(duration: TimeInterval? = nil, completion: (() -> Void)? = nil) {
+        let dur = duration ?? AppPreferences.shared.animationDuration
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = dur
+            self.animator().alphaValue = 0.0
+        }, completionHandler: {
+            self.orderOut(nil)
+            completion?()
+        })
+    }
 }
