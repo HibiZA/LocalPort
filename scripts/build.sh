@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="DevSpace"
 APP_DIR="build/${APP_NAME}.app"
+DMG_PATH="build/${APP_NAME}.dmg"
 RUST_RELEASE="target/release"
 SWIFT_RELEASE="macos/.build/release"
 
@@ -16,7 +17,7 @@ cargo build --release --quiet
 
 # 2. Build Swift app
 echo "  Building Swift (macOS app)..."
-(cd macos && swift build -c release --quiet)
+(cd macos && swift build -c release --quiet 2>&1 | grep -v "warning:" || true)
 
 # 3. Assemble .app bundle
 echo "  Assembling app bundle..."
@@ -38,8 +39,33 @@ cp macos/Resources/Info.plist "$APP_DIR/Contents/"
 # Create minimal PkgInfo
 echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
-echo ""
 echo "  Built: $APP_DIR"
+
+# 4. Create .dmg if requested
+if [[ "${1:-}" == "--dmg" ]]; then
+    echo "  Creating DMG..."
+    rm -f "$DMG_PATH"
+
+    # Create a temporary directory for DMG contents
+    DMG_STAGING="build/dmg-staging"
+    rm -rf "$DMG_STAGING"
+    mkdir -p "$DMG_STAGING"
+    cp -r "$APP_DIR" "$DMG_STAGING/"
+
+    # Create a symlink to /Applications for drag-install
+    ln -s /Applications "$DMG_STAGING/Applications"
+
+    # Create DMG
+    hdiutil create -volname "$APP_NAME" \
+        -srcfolder "$DMG_STAGING" \
+        -ov -format UDZO \
+        "$DMG_PATH" \
+        > /dev/null 2>&1
+
+    rm -rf "$DMG_STAGING"
+    echo "  Built: $DMG_PATH"
+fi
+
 echo ""
 echo "  To install:"
 echo "    cp -r $APP_DIR /Applications/"
