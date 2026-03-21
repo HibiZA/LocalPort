@@ -39,8 +39,8 @@ final class MenuBarController: NSObject {
         logger.info("MenuBarController ready")
     }
 
-    func update(projects: [Project], activeProjectID: String?, windowCounts: [String: Int]) {
-        rebuildMenu(projects: projects, activeProjectID: activeProjectID, windowCounts: windowCounts)
+    func update(projects: [Project], activeProjectID: String?, windowCounts: [String: Int], routes: [String: String] = [:]) {
+        rebuildMenu(projects: projects, activeProjectID: activeProjectID, windowCounts: windowCounts, routes: routes)
         updateBadge()
     }
 
@@ -56,7 +56,7 @@ final class MenuBarController: NSObject {
 
     // MARK: - Menu Construction
 
-    private func rebuildMenu(projects: [Project], activeProjectID: String?, windowCounts: [String: Int] = [:]) {
+    private func rebuildMenu(projects: [Project], activeProjectID: String?, windowCounts: [String: Int] = [:], routes: [String: String] = [:]) {
         menu.removeAllItems()
         projectMenuItems.removeAll()
 
@@ -116,16 +116,32 @@ final class MenuBarController: NSObject {
 
             menu.addItem(item)
 
-            // Submenu details: windows, hostname
+            // Submenu details: hostname, port status, windows
             let windowCount = windowCounts[project.id] ?? 0
+            let upstream = routes[project.id]
+            let statusText: String
+            if let upstream = upstream, let port = upstream.components(separatedBy: ":").last {
+                statusText = ":\(port)"
+            } else {
+                statusText = "stopped"
+            }
+            let detailString = "    \(project.hostname) · \(statusText) · \(windowCount) window\(windowCount == 1 ? "" : "s")"
             let detailItem = NSMenuItem()
-            detailItem.attributedTitle = NSAttributedString(
-                string: "    \(project.hostname) · \(windowCount) window\(windowCount == 1 ? "" : "s")",
+            let detailAttrs = NSMutableAttributedString(
+                string: detailString,
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 11),
                     .foregroundColor: NSColor.secondaryLabelColor,
                 ]
             )
+            // Color the status: green for running, red for stopped
+            let statusRange = (detailString as NSString).range(of: statusText)
+            if upstream != nil {
+                detailAttrs.addAttribute(.foregroundColor, value: NSColor.systemGreen, range: statusRange)
+            } else {
+                detailAttrs.addAttribute(.foregroundColor, value: NSColor.systemRed.withAlphaComponent(0.7), range: statusRange)
+            }
+            detailItem.attributedTitle = detailAttrs
             detailItem.isEnabled = false
             menu.addItem(detailItem)
 

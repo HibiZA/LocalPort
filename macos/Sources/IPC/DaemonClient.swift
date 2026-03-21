@@ -28,14 +28,6 @@ final class DaemonClient {
     // MARK: - Connection
 
     func connect() throws {
-        var readStream: Unmanaged<CFReadStream>?
-        var writeStream: Unmanaged<CFWriteStream>?
-
-        let path = socketPath as CFString
-
-        CFStreamCreatePairWithSocketToHost(nil, path, 0, &readStream, &writeStream)
-
-        // For Unix socket, we use a different approach
         let socket = socket(AF_UNIX, SOCK_STREAM, 0)
         guard socket >= 0 else {
             throw DaemonError.connectionFailed("Failed to create socket")
@@ -69,6 +61,8 @@ final class DaemonClient {
         }
 
         // Create streams from the connected socket
+        var readStream: Unmanaged<CFReadStream>?
+        var writeStream: Unmanaged<CFWriteStream>?
         CFStreamCreatePairWithSocket(nil, Int32(socket), &readStream, &writeStream)
 
         guard let input = readStream?.takeRetainedValue() as InputStream?,
