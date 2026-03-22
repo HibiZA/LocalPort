@@ -9,6 +9,9 @@ protocol MenuBarControllerDelegate: AnyObject {
     func menuBarDidRequestAddProject()
     func menuBarDidRequestPreferences()
     func menuBarDidRequestUpdate()
+    func menuBarDidRequestStartDaemon()
+    func menuBarDidRequestStopDaemon()
+    func menuBarDidRequestUninstall()
     func menuBarDidRequestQuit()
 }
 
@@ -23,6 +26,7 @@ final class MenuBarController: NSObject {
     // Notification tracking per project
     private var pendingNotifications: [String: Int] = [:]
     private var availableUpdate: String?
+    private var daemonConnected: Bool = false
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -41,7 +45,8 @@ final class MenuBarController: NSObject {
         logger.info("MenuBarController ready")
     }
 
-    func update(projects: [Project], activeProjectID: String?, windowCounts: [String: Int], routes: [String: String] = [:]) {
+    func update(projects: [Project], activeProjectID: String?, windowCounts: [String: Int], routes: [String: String] = [:], daemonConnected: Bool = false) {
+        self.daemonConnected = daemonConnected
         rebuildMenu(projects: projects, activeProjectID: activeProjectID, windowCounts: windowCounts, routes: routes)
         updateBadge()
     }
@@ -67,111 +72,94 @@ final class MenuBarController: NSObject {
         menu.removeAllItems()
         projectMenuItems.removeAll()
 
-        // Header
+        // Header with daemon status inline
         let header = NSMenuItem()
-        header.attributedTitle = NSAttributedString(
-            string: "LocalPort",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
-            ]
+        let dot = "●"
+        let dotColor = daemonConnected ? NSColor.systemGreen : NSColor.systemRed.withAlphaComponent(0.7)
+        let headerStr = NSMutableAttributedString(
+            string: "LocalPort  \(dot)",
+            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]
         )
-        header.isEnabled = false
+        let dotRange = (headerStr.string as NSString).range(of: dot)
+        headerStr.addAttribute(.foregroundColor, value: dotColor, range: dotRange)
+        headerStr.addAttribute(.font, value: NSFont.systemFont(ofSize: 8), range: dotRange)
+        header.attributedTitle = headerStr
+        header.target = self
+        header.action = daemonConnected ? #selector(stopDaemon) : #selector(startDaemon)
+        header.toolTip = daemonConnected ? "Click to stop daemon" : "Click to start daemon"
         menu.addItem(header)
+
         menu.addItem(.separator())
 
-        // Project list
+        // Project list — one line per project
         for (i, project) in projects.enumerated() {
-            let isActive = project.id == activeProjectID
             let item = NSMenuItem()
-
-            // Build title with status indicator and notification count
-            let bullet = isActive ? "●" : "○"
-            var title = "\(bullet) \(project.name)"
-
-            if let notifCount = pendingNotifications[project.id], notifCount > 0 {
-                title += "  (\(notifCount) notification\(notifCount == 1 ? "" : "s"))"
-            }
-
-            item.title = title
             item.tag = i
             item.target = self
             item.action = #selector(projectSelected(_:))
             item.representedObject = project.id
 
-            // Keyboard shortcut hint
+            // Keyboard shortcut
             if i < 9 {
                 item.keyEquivalent = "\(i + 1)"
                 item.keyEquivalentModifierMask = .control
             }
 
-            // Color indicator via attributed string
-            let attrTitle = NSMutableAttributedString(string: title)
-            let bulletRange = (title as NSString).range(of: bullet)
-            attrTitle.addAttribute(
-                .foregroundColor,
-                value: project.color.nsColor,
-                range: bulletRange
-            )
-            if isActive {
-                attrTitle.addAttribute(
-                    .font,
-                    value: NSFont.systemFont(ofSize: 14, weight: .medium),
-                    range: NSRange(location: 0, length: title.count)
-                )
+            // Build: "● name  hostname · :port" or "○ name  hostname · stopped"
+            let isActive = project.id == activeProjectID
+            let bullet = isActive ? "●" : "○"
+            let upstream = routes[project.id]
+            let portStatus: String
+            if let upstream = upstream, let port = upstream.components(separatedBy: ":").last {
+                portStatus = ":\(port)"
+            } else {
+                portStatus = "stopped"
             }
+            let title = "\(bullet) \(project.name)  \(project.hostname) · \(portStatus)"
+
+            let attrTitle = NSMutableAttributedString(string: title)
+
+            // Color the bullet with project color
+            let bulletRange = NSRange(location: 0, length: 1)
+            attrTitle.addAttribute(.foregroundColor, value: project.color.nsColor, range: bulletRange)
+
+            // Dim the hostname + status portion
+            let detailStart = (title as NSString).range(of: "  \(project.hostname)").location
+            if detailStart != NSNotFound {
+                let detailRange = NSRange(location: detailStart, length: title.count - detailStart)
+                attrTitle.addAttribute(.font, value: NSFont.systemFont(ofSize: 12), range: detailRange)
+                attrTitle.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: detailRange)
+            }
+
+            // Color the port status
+            let portRange = (title as NSString).range(of: portStatus)
+            if upstream != nil {
+                attrTitle.addAttribute(.foregroundColor, value: NSColor.systemGreen, range: portRange)
+            } else {
+                attrTitle.addAttribute(.foregroundColor, value: NSColor.systemRed.withAlphaComponent(0.7), range: portRange)
+            }
+
+            if isActive {
+                attrTitle.addAttribute(.font, value: NSFont.systemFont(ofSize: 14, weight: .medium), range: NSRange(location: 0, length: detailStart != NSNotFound ? detailStart : title.count))
+            }
+
             item.attributedTitle = attrTitle
 
-            menu.addItem(item)
-
-            // Submenu details: hostname, port status, windows
-            let windowCount = windowCounts[project.id] ?? 0
-            let upstream = routes[project.id]
-            let statusText: String
-            if let upstream = upstream, let port = upstream.components(separatedBy: ":").last {
-                statusText = ":\(port)"
-            } else {
-                statusText = "stopped"
-            }
-            let detailString = "    \(project.hostname) · \(statusText) · \(windowCount) window\(windowCount == 1 ? "" : "s")"
-            let detailItem = NSMenuItem()
-            let detailAttrs = NSMutableAttributedString(
-                string: detailString,
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 11),
-                    .foregroundColor: NSColor.secondaryLabelColor,
-                ]
-            )
-            // Color the status: green for running, red for stopped
-            let statusRange = (detailString as NSString).range(of: statusText)
-            if upstream != nil {
-                detailAttrs.addAttribute(.foregroundColor, value: NSColor.systemGreen, range: statusRange)
-            } else {
-                detailAttrs.addAttribute(.foregroundColor, value: NSColor.systemRed.withAlphaComponent(0.7), range: statusRange)
-            }
-            detailItem.attributedTitle = detailAttrs
-            detailItem.isEnabled = false
-            menu.addItem(detailItem)
-
-            // Settings item
-            let settingsItem = NSMenuItem()
-            settingsItem.attributedTitle = NSAttributedString(
-                string: "    Settings...",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 11),
-                    .foregroundColor: NSColor.tertiaryLabelColor,
-                ]
-            )
+            // Settings in submenu
+            let sub = NSMenu()
+            let settingsItem = NSMenuItem(title: "Settings...", action: #selector(projectSettingsClicked(_:)), keyEquivalent: "")
             settingsItem.target = self
-            settingsItem.action = #selector(projectSettingsClicked(_:))
             settingsItem.representedObject = project.id
-            menu.addItem(settingsItem)
+            sub.addItem(settingsItem)
+            item.submenu = sub
 
+            menu.addItem(item)
             projectMenuItems[project.id] = item
         }
 
         if projects.isEmpty {
             let emptyItem = NSMenuItem()
-            emptyItem.title = "  No projects registered"
+            emptyItem.title = "No projects"
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
         }
@@ -205,6 +193,10 @@ final class MenuBarController: NSObject {
         }
 
         menu.addItem(.separator())
+
+        let uninstallItem = NSMenuItem(title: "Uninstall LocalPort...", action: #selector(uninstall), keyEquivalent: "")
+        uninstallItem.target = self
+        menu.addItem(uninstallItem)
 
         let quitItem = NSMenuItem(title: "Quit LocalPort", action: #selector(quit), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = .command
@@ -283,6 +275,18 @@ final class MenuBarController: NSObject {
 
     @objc private func openPreferences() {
         delegate?.menuBarDidRequestPreferences()
+    }
+
+    @objc private func startDaemon() {
+        delegate?.menuBarDidRequestStartDaemon()
+    }
+
+    @objc private func stopDaemon() {
+        delegate?.menuBarDidRequestStopDaemon()
+    }
+
+    @objc private func uninstall() {
+        delegate?.menuBarDidRequestUninstall()
     }
 
     @objc private func openUpdate() {

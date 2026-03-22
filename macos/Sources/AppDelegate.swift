@@ -33,11 +33,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController.delegate = self
         menuBarController.setup()
 
-        // Run first-time setup if needed
-        if !UserDefaults.standard.bool(forKey: "setupComplete") {
-            runFirstTimeSetup()
-        }
-
         // Load saved projects
         loadProjects()
 
@@ -57,6 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Poll daemon for route status every 3 seconds
         daemonPollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             self?.refreshProjectsFromDaemon()
+        }
+
+        // Run first-time setup in the background so the menu bar stays responsive
+        if !UserDefaults.standard.bool(forKey: "setupComplete") {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.runFirstTimeSetup()
+            }
         }
 
         logger.info("LocalPort ready")
@@ -79,28 +81,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // Sanitize TLD to prevent command injection (runs as root)
+        let sanitizedTLD = tld.filter { $0.isLetter || $0.isNumber }
+        guard !sanitizedTLD.isEmpty else {
+            logger.error("Invalid TLD: \(tld)")
+            return
+        }
+
         logger.info("Running first-time setup")
 
-        // Build the privileged script that creates DNS resolver + pfctl rules
-        let script = """
-        do shell script "
-            mkdir -p /etc/resolver
-            echo 'nameserver 127.0.0.1\\nport 5553' > /etc/resolver/\(tld)
-            cat > /etc/pf.anchors/localport << 'PF'
-            rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080
-            rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443
-        PF
-            pfctl -a localport -f /etc/pf.anchors/localport 2>/dev/null
-            pfctl -e 2>/dev/null
-        " with administrator privileges
-        """
+        // Find setup script — bundled or in source tree
+        let setupPaths = [
+            Bundle.main.bundlePath + "/Contents/Resources/setup.sh",
+            "scripts/setup.sh",
+            "../scripts/setup.sh",
+        ]
+        guard let setupScript = setupPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            logger.error("Setup script not found")
+            return
+        }
 
-        let appleScript = NSAppleScript(source: script)
-        var error: NSDictionary?
-        appleScript?.executeAndReturnError(&error)
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = [
+            "-e",
+            "do shell script \"bash '\(setupScript)' '\(sanitizedTLD)'\" with administrator privileges",
+        ]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
 
-        if let error = error {
-            logger.error("Setup script failed: \(error)")
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            logger.error("Setup failed to launch: \(error)")
+            return
+        }
+
+        guard task.terminationStatus == 0 else {
+            logger.error("Setup script failed (exit \(task.terminationStatus))")
             // Don't mark complete — will retry next launch
             return
         }
@@ -135,45 +154,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Daemon Connection
 
     private func connectToDaemon() {
-        startBundledDaemon()
+        startDaemon()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
             do {
-                try self?.daemonClient.connect()
-                self?.refreshProjectsFromDaemon()
+                try self.daemonClient.connect()
+                self.updateMenuBar()
+                self.registerSavedProjectsWithDaemon()
+                self.refreshProjectsFromDaemon()
             } catch {
                 logger.warning("Could not connect to daemon: \(error). Running in standalone mode.")
             }
         }
     }
 
-    private func startBundledDaemon() {
-        let bundlePath = Bundle.main.bundlePath
-        let helperPath = bundlePath + "/Contents/Helpers/localportd"
-
-        guard FileManager.default.fileExists(atPath: helperPath) else {
-            logger.info("No bundled daemon found at \(helperPath), expecting external daemon")
-            return
-        }
-
+    private func startDaemon() {
         let uid = getuid()
         let socketPath = "/tmp/localport-\(uid).sock"
         if FileManager.default.fileExists(atPath: socketPath) {
-            logger.info("Daemon socket already exists, skipping launch")
+            // Check if socket is actually connectable (not stale)
+            do {
+                try daemonClient.connect()
+                logger.info("Daemon already running, skipping launch")
+                return
+            } catch {
+                // Stale socket — remove it and proceed
+                logger.info("Removing stale daemon socket")
+                try? FileManager.default.removeItem(atPath: socketPath)
+            }
+        }
+
+        // Try bundled binary first, then system paths
+        let bundledPath = Bundle.main.bundlePath + "/Contents/Helpers/localportd"
+        let searchPaths = [
+            bundledPath,
+            "\(NSHomeDirectory())/.cargo/bin/localportd",
+            "/usr/local/bin/localportd",
+            "/opt/homebrew/bin/localportd",
+        ]
+
+        guard let daemonPath = searchPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            logger.warning("No localportd binary found")
             return
         }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: helperPath)
+        process.executableURL = URL(fileURLWithPath: daemonPath)
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
             daemonProcess = process
-            logger.info("Started bundled daemon (PID \(process.processIdentifier))")
+            logger.info("Started daemon from \(daemonPath) (PID \(process.processIdentifier))")
         } catch {
-            logger.error("Failed to start bundled daemon: \(error)")
+            logger.error("Failed to start daemon: \(error)")
         }
     }
 
@@ -184,8 +220,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         daemonProcess = nil
     }
 
-    private func refreshProjectsFromDaemon() {
+    private func registerSavedProjectsWithDaemon() {
         guard daemonClient.isConnected else { return }
+        let projectsToRegister = projects.filter { !$0.directory.isEmpty }
+        guard !projectsToRegister.isEmpty else { return }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            for project in projectsToRegister {
+                do {
+                    _ = try self.daemonClient.registerProject(directory: project.directory)
+                    logger.info("Re-registered project '\(project.name)' with daemon")
+                } catch {
+                    logger.error("Failed to register \(project.name) with daemon: \(error)")
+                }
+            }
+        }
+    }
+
+    private func refreshProjectsFromDaemon() {
+        // Try to reconnect if not connected
+        if !daemonClient.isConnected {
+            do {
+                try daemonClient.connect()
+                updateMenuBar()
+                registerSavedProjectsWithDaemon()
+            } catch {
+                updateMenuBar()
+                return
+            }
+        }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
@@ -196,6 +260,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } catch {
                 logger.error("Failed to get proxy status: \(error)")
+                DispatchQueue.main.async {
+                    self.updateMenuBar()
+                }
             }
         }
     }
@@ -244,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let tld = UserDefaults.standard.string(forKey: PrefKey.tld) ?? "test"
         let hostname = projectConfig?["hostname"] ?? "\(projectName).\(tld)"
 
-        var project = Project(
+        let project = Project(
             id: projectName,
             name: projectName,
             directory: directory,
@@ -252,24 +319,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             color: NSColorWrapper(hex: colorPalette[colorIndex])
         )
 
-        if daemonClient.isConnected {
-            do {
-                let result = try daemonClient.registerProject(directory: directory)
-                if let name = result["name"] as? String {
-                    project.id = name
-                    project.name = name
-                }
-                if let h = result["hostname"] as? String {
-                    project.hostname = h
-                }
-            } catch {
-                logger.error("Failed to register project: \(error)")
-            }
-        }
-
         projects.append(project)
         updateMenuBar()
         saveProjects()
+
+        // Register with daemon in the background
+        if daemonClient.isConnected {
+            let dir = directory
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { return }
+                do {
+                    let result = try self.daemonClient.registerProject(directory: dir)
+                    DispatchQueue.main.async {
+                        guard let idx = self.projects.firstIndex(where: { $0.directory == dir }) else { return }
+                        if let name = result["name"] as? String {
+                            self.projects[idx].id = name
+                            self.projects[idx].name = name
+                        }
+                        if let h = result["hostname"] as? String {
+                            self.projects[idx].hostname = h
+                        }
+                        self.updateMenuBar()
+                        self.saveProjects()
+                    }
+                } catch {
+                    logger.error("Failed to register project: \(error)")
+                }
+            }
+        }
     }
 
     func updateProject(_ projectID: String, settings: ProjectSettings) {
@@ -343,7 +420,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             projects: projects,
             activeProjectID: nil,
             windowCounts: [:],
-            routes: projectRoutes
+            routes: projectRoutes,
+            daemonConnected: daemonClient.isConnected
         )
     }
 }
@@ -409,10 +487,84 @@ extension AppDelegate: MenuBarControllerDelegate {
         prefsController.showWindow()
     }
 
+    func menuBarDidRequestStartDaemon() {
+        startDaemon()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.refreshProjectsFromDaemon()
+        }
+    }
+
+    func menuBarDidRequestStopDaemon() {
+        // Try graceful shutdown via IPC, then fall back to process signal
+        if daemonClient.isConnected {
+            _ = try? daemonClient.callSync(method: "daemon.shutdown")
+            daemonClient.disconnect()
+        }
+        stopBundledDaemon()
+
+        // Also remove the socket so the status updates
+        let uid = getuid()
+        let socketPath = "/tmp/localport-\(uid).sock"
+        try? FileManager.default.removeItem(atPath: socketPath)
+
+        updateMenuBar()
+    }
+
     func menuBarDidRequestUpdate() {
         if let url = updateChecker.releaseURL {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    func menuBarDidRequestUninstall() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = "Uninstall LocalPort?"
+        alert.informativeText = "This will remove LocalPort, its system configuration (DNS, port forwarding), and stop the daemon. Your projects will not be affected."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            NSApp.setActivationPolicy(.accessory)
+            return
+        }
+
+        // Stop daemon
+        menuBarDidRequestStopDaemon()
+
+        // Find uninstall script
+        let uninstallPaths = [
+            Bundle.main.bundlePath + "/Contents/Resources/uninstall.sh",
+            "scripts/uninstall.sh",
+            "../scripts/uninstall.sh",
+        ]
+
+        if let script = uninstallPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            let appleScript = NSAppleScript(source: """
+            do shell script "bash '\(script)'" with administrator privileges
+            """)
+            var error: NSDictionary?
+            appleScript?.executeAndReturnError(&error)
+
+            if let error = error {
+                logger.error("Uninstall failed: \(error)")
+            }
+        }
+
+        // Remove app config
+        let configDir = NSHomeDirectory() + "/.config/localport"
+        try? FileManager.default.removeItem(atPath: configDir)
+
+        // Remove the app itself if running from /Applications
+        let appPath = Bundle.main.bundlePath
+        if appPath.hasPrefix("/Applications") {
+            try? FileManager.default.removeItem(atPath: appPath)
+        }
+
+        NSApp.terminate(nil)
     }
 
     func menuBarDidRequestQuit() {
