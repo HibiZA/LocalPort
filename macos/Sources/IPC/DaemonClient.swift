@@ -4,16 +4,13 @@ import os.log
 private let logger = Logger(subsystem: "com.localport.app", category: "DaemonClient")
 
 /// JSON-RPC 2.0 client that communicates with the LocalPort daemon over a Unix socket.
+/// Uses simple synchronous I/O — each call writes a request and reads the response.
 final class DaemonClient {
     private let socketPath: String
-    private var inputStream: InputStream?
-    private var outputStream: OutputStream?
+    private var fd: Int32 = -1
     private var requestID: Int = 0
-    private var pendingCallbacks: [Int: (Result<Any, Error>) -> Void] = [:]
-    private var readBuffer = Data()
-    private let queue = DispatchQueue(label: "com.localport.daemon-client", qos: .userInitiated)
+    private let lock = NSLock()
 
-    var onEvent: ((String, [String: Any]) -> Void)?
     private(set) var isConnected = false
 
     init(socketPath: String? = nil) {
@@ -28,8 +25,18 @@ final class DaemonClient {
     // MARK: - Connection
 
     func connect() throws {
-        let socket = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard socket >= 0 else {
+        lock.lock()
+        defer { lock.unlock() }
+
+        // Close existing connection
+        if fd >= 0 {
+            close(fd)
+            fd = -1
+            isConnected = false
+        }
+
+        let sock = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard sock >= 0 else {
             throw DaemonError.connectionFailed("Failed to create socket")
         }
 
@@ -37,7 +44,7 @@ final class DaemonClient {
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = socketPath.utf8CString
         guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
-            close(socket)
+            close(sock)
             throw DaemonError.connectionFailed("Socket path too long")
         }
         withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
@@ -51,96 +58,100 @@ final class DaemonClient {
         let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
         let result = withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockAddr in
-                Foundation.connect(socket, sockAddr, addrLen)
+                Foundation.connect(sock, sockAddr, addrLen)
             }
         }
 
         guard result == 0 else {
-            close(socket)
+            close(sock)
             throw DaemonError.connectionFailed("Failed to connect: \(String(cString: strerror(errno)))")
         }
 
-        // Create streams from the connected socket
-        var readStream: Unmanaged<CFReadStream>?
-        var writeStream: Unmanaged<CFWriteStream>?
-        CFStreamCreatePairWithSocket(nil, Int32(socket), &readStream, &writeStream)
+        // Set read timeout (5 seconds)
+        var tv = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
-        guard let input = readStream?.takeRetainedValue() as InputStream?,
-              let output = writeStream?.takeRetainedValue() as OutputStream? else {
-            close(socket)
-            throw DaemonError.connectionFailed("Failed to create streams")
-        }
-
-        // Ensure streams close the socket when done
-        input.setProperty(kCFBooleanTrue, forKey: Stream.PropertyKey(rawValue: kCFStreamPropertyShouldCloseNativeSocket as String))
-        output.setProperty(kCFBooleanTrue, forKey: Stream.PropertyKey(rawValue: kCFStreamPropertyShouldCloseNativeSocket as String))
-
-        self.inputStream = input
-        self.outputStream = output
-
-        input.open()
-        output.open()
-
-        isConnected = true
+        self.fd = sock
+        self.isConnected = true
         logger.info("Connected to daemon at \(self.socketPath)")
-
-        // Start reading
-        startReading()
     }
 
     func disconnect() {
-        inputStream?.close()
-        outputStream?.close()
-        inputStream = nil
-        outputStream = nil
+        lock.lock()
+        defer { lock.unlock() }
+        if fd >= 0 {
+            close(fd)
+            fd = -1
+        }
         isConnected = false
-        logger.info("Disconnected from daemon")
     }
 
     // MARK: - JSON-RPC Calls
 
-    func call(method: String, params: [String: Any] = [:], completion: @escaping (Result<Any, Error>) -> Void) {
-        queue.async { [weak self] in
-            guard let self = self else { return }
+    /// Send a JSON-RPC request and wait for the response. Thread-safe.
+    func callSync(method: String, params: [String: Any] = [:]) throws -> Any {
+        lock.lock()
+        defer { lock.unlock() }
 
-            self.requestID += 1
-            let id = self.requestID
+        guard fd >= 0 else {
+            throw DaemonError.connectionFailed("Not connected")
+        }
 
-            let request: [String: Any] = [
-                "jsonrpc": "2.0",
-                "id": id,
-                "method": method,
-                "params": params,
-            ]
+        requestID += 1
+        let id = requestID
 
-            self.pendingCallbacks[id] = completion
+        let request: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        ]
 
-            do {
-                let data = try JSONSerialization.data(withJSONObject: request)
-                self.send(data)
-            } catch {
-                self.pendingCallbacks.removeValue(forKey: id)
-                completion(.failure(error))
+        let data = try JSONSerialization.data(withJSONObject: request)
+        var message = data
+        message.append(0x0A) // newline delimiter
+
+        // Write
+        let written = message.withUnsafeBytes { ptr -> Int in
+            guard let base = ptr.baseAddress else { return -1 }
+            return Darwin.write(fd, base, message.count)
+        }
+
+        if written < 0 {
+            isConnected = false
+            throw DaemonError.connectionFailed("Write failed: \(String(cString: strerror(errno)))")
+        }
+
+        // Read until we get a complete newline-delimited response
+        var readBuffer = Data()
+        var buf = [UInt8](repeating: 0, count: 4096)
+
+        while true {
+            if let newlineIndex = readBuffer.firstIndex(of: 0x0A) {
+                let messageData = readBuffer[readBuffer.startIndex..<newlineIndex]
+                guard let json = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any] else {
+                    throw DaemonError.rpcError("Invalid JSON response")
+                }
+
+                if let error = json["error"] as? [String: Any] {
+                    let msg = error["message"] as? String ?? "Unknown error"
+                    throw DaemonError.rpcError(msg)
+                }
+
+                return json["result"] ?? NSNull()
+            }
+
+            let bytesRead = Darwin.read(fd, &buf, buf.count)
+            if bytesRead > 0 {
+                readBuffer.append(contentsOf: buf[0..<bytesRead])
+            } else if bytesRead == 0 {
+                isConnected = false
+                throw DaemonError.connectionFailed("Connection closed")
+            } else {
+                isConnected = false
+                throw DaemonError.timeout
             }
         }
-    }
-
-    /// Synchronous convenience for simple calls
-    func callSync(method: String, params: [String: Any] = [:]) throws -> Any {
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<Any, Error> = .failure(DaemonError.timeout)
-
-        call(method: method, params: params) { r in
-            result = r
-            semaphore.signal()
-        }
-
-        let timeout = semaphore.wait(timeout: .now() + 5)
-        if timeout == .timedOut {
-            throw DaemonError.timeout
-        }
-
-        return try result.get()
     }
 
     // MARK: - Specific RPC Methods
@@ -151,81 +162,10 @@ final class DaemonClient {
     }
 
     func getProxyStatus() throws -> [[String: Any]] {
-        let result = try callSync(method: "proxy.status")
+        let result = try callSync(method: "project.status")
         guard let dict = result as? [String: Any],
               let routes = dict["routes"] as? [[String: Any]] else { return [] }
         return routes
-    }
-
-    // MARK: - I/O
-
-    private func send(_ data: Data) {
-        guard let output = outputStream else { return }
-
-        // Send as newline-delimited JSON
-        var message = data
-        message.append(0x0A) // newline
-
-        message.withUnsafeBytes { ptr in
-            guard let base = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            output.write(base, maxLength: message.count)
-        }
-    }
-
-    private func startReading() {
-        queue.async { [weak self] in
-            guard let self = self, let input = self.inputStream else { return }
-
-            let bufferSize = 4096
-            var buffer = [UInt8](repeating: 0, count: bufferSize)
-
-            while input.hasBytesAvailable || self.isConnected {
-                let bytesRead = input.read(&buffer, maxLength: bufferSize)
-                if bytesRead > 0 {
-                    self.readBuffer.append(contentsOf: buffer[0..<bytesRead])
-                    self.processReadBuffer()
-                } else if bytesRead < 0 {
-                    logger.error("Read error: \(input.streamError?.localizedDescription ?? "unknown")")
-                    break
-                } else {
-                    // No bytes available, sleep briefly
-                    Thread.sleep(forTimeInterval: 0.01)
-                }
-            }
-        }
-    }
-
-    private func processReadBuffer() {
-        // Split by newlines (newline-delimited JSON)
-        while let newlineIndex = readBuffer.firstIndex(of: 0x0A) {
-            let messageData = readBuffer[readBuffer.startIndex..<newlineIndex]
-            readBuffer = Data(readBuffer[readBuffer.index(after: newlineIndex)...])
-
-            guard let json = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any] else {
-                continue
-            }
-
-            handleMessage(json)
-        }
-    }
-
-    private func handleMessage(_ json: [String: Any]) {
-        if let id = json["id"] as? Int {
-            // Response to a request
-            let callback = pendingCallbacks.removeValue(forKey: id)
-            if let error = json["error"] as? [String: Any] {
-                let message = error["message"] as? String ?? "Unknown error"
-                callback?(.failure(DaemonError.rpcError(message)))
-            } else {
-                callback?(.success(json["result"] ?? NSNull()))
-            }
-        } else if let method = json["method"] as? String {
-            // Server-initiated event (notification)
-            let params = json["params"] as? [String: Any] ?? [:]
-            DispatchQueue.main.async { [weak self] in
-                self?.onEvent?(method, params)
-            }
-        }
     }
 }
 

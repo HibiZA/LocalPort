@@ -40,6 +40,8 @@ cp macos/Resources/Info.plist "$APP_DIR/Contents/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_DIR/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_DIR/Contents/Info.plist"
 echo "  Version: $VERSION"
+cp scripts/setup.sh "$APP_DIR/Contents/Resources/" 2>/dev/null || true
+cp scripts/uninstall.sh "$APP_DIR/Contents/Resources/" 2>/dev/null || true
 cp macos/Resources/AppIcon.icns "$APP_DIR/Contents/Resources/" 2>/dev/null || true
 cp macos/Resources/MenuBarIcon.png "$APP_DIR/Contents/Resources/" 2>/dev/null || true
 cp macos/Resources/MenuBarIcon@2x.png "$APP_DIR/Contents/Resources/" 2>/dev/null || true
