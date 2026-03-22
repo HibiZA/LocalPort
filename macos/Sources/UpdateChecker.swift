@@ -3,7 +3,7 @@ import os.log
 
 private let logger = Logger(subsystem: "com.localport.app", category: "UpdateChecker")
 
-let appVersion = "0.1.3"
+let appVersion = "0.1.4"
 
 final class UpdateChecker {
     private let owner = "HibiZA"
