@@ -203,7 +203,7 @@ final class MenuBarController: NSObject {
     private func makeIcon(badge: Bool = false) -> NSImage {
         // Load the icon image from the app bundle's Resources
         let bundle = Bundle.main
-        let size = NSSize(width: 18, height: 18)
+        let size = NSSize(width: 22, height: 22)
 
         // Try @2x first, fall back to 1x
         if let path = bundle.path(forResource: "MenuBarIcon@2x", ofType: "png"),
