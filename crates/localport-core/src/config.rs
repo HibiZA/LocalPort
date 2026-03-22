@@ -1,8 +1,7 @@
 use crate::error::LocalPortError;
-use crate::types::ProjectConfig;
 use crate::validation;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Global daemon configuration (~/.config/localport/config.toml)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,19 +145,6 @@ impl GlobalConfig {
     }
 }
 
-pub fn load_project_config(dir: &Path) -> Result<ProjectConfig, LocalPortError> {
-    let config_path = dir.join(".localport.toml");
-    if !config_path.exists() {
-        return Err(LocalPortError::Config(format!(
-            "no .localport.toml found in {}",
-            dir.display()
-        )));
-    }
-    let content = std::fs::read_to_string(&config_path).map_err(LocalPortError::Io)?;
-    toml::from_str(&content)
-        .map_err(|e| LocalPortError::Config(format!("failed to parse .localport.toml: {}", e)))
-}
-
 pub fn global_config_path() -> PathBuf {
     dirs_path("config").join("localport").join("config.toml")
 }
@@ -233,26 +219,4 @@ log_level = "debug"
         assert_eq!(config.daemon.dns_port, 5553);
     }
 
-    #[test]
-    fn test_parse_project_config() {
-        let toml_str = r#"
-[project]
-name = "my-app"
-hostname = "my-app"
-"#;
-        let config: ProjectConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.project.name, "my-app");
-        assert_eq!(config.project.hostname, Some("my-app".to_string()));
-    }
-
-    #[test]
-    fn test_parse_minimal_project_config() {
-        let toml_str = r#"
-[project]
-name = "minimal"
-"#;
-        let config: ProjectConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.project.name, "minimal");
-        assert_eq!(config.project.hostname, None);
-    }
 }
