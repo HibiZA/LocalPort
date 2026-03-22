@@ -277,29 +277,23 @@ private struct PreferencesView: View {
         VStack(spacing: 12) {
             Spacer()
 
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color(nsColor: NSColor(hex: "#6366F1")),
-                                 Color(nsColor: NSColor(hex: "#EC4899"))],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 72, height: 72)
-                .overlay(
-                    Text("DS")
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundStyle(.white)
-                )
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 96, height: 96)
 
             Text("DevSpace")
                 .font(.title.bold())
 
-            Text("Version 0.1.0")
+            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.2")")
                 .foregroundStyle(.secondary)
 
-            Text("Parallel development workspace manager for macOS")
+            Text("Run multiple projects with unique local hostnames.\nNo more remembering port numbers.")
+                .multilineTextAlignment(.center)
                 .foregroundStyle(.tertiary)
+                .padding(.horizontal)
+
+            Link("GitHub", destination: URL(string: "https://github.com/HibiZA/DevSpace")!)
+                .foregroundStyle(.blue)
 
             Spacer()
         }
