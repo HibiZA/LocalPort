@@ -33,11 +33,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController.delegate = self
         menuBarController.setup()
 
-        // Run first-time setup if needed
-        if !UserDefaults.standard.bool(forKey: "setupComplete") {
-            runFirstTimeSetup()
-        }
-
         // Load saved projects
         loadProjects()
 
@@ -57,6 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Poll daemon for route status every 3 seconds
         daemonPollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             self?.refreshProjectsFromDaemon()
+        }
+
+        // Run first-time setup in the background so the menu bar stays responsive
+        if !UserDefaults.standard.bool(forKey: "setupComplete") {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.runFirstTimeSetup()
+            }
         }
 
         logger.info("LocalPort ready")
@@ -99,16 +101,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let script = """
-        do shell script "bash '\(setupScript)' '\(sanitizedTLD)'" with administrator privileges
-        """
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = [
+            "-e",
+            "do shell script \"bash '\(setupScript)' '\(sanitizedTLD)'\" with administrator privileges",
+        ]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
 
-        let appleScript = NSAppleScript(source: script)
-        var error: NSDictionary?
-        appleScript?.executeAndReturnError(&error)
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            logger.error("Setup failed to launch: \(error)")
+            return
+        }
 
-        if let error = error {
-            logger.error("Setup script failed: \(error)")
+        guard task.terminationStatus == 0 else {
+            logger.error("Setup script failed (exit \(task.terminationStatus))")
             // Don't mark complete — will retry next launch
             return
         }
