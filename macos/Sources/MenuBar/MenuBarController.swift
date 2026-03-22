@@ -201,80 +201,68 @@ final class MenuBarController: NSObject {
     }
 
     private func makeIcon(badge: Bool = false) -> NSImage {
-        let size = NSSize(width: 18, height: 18)
+        let size = NSSize(width: 16, height: 16)
         let image = NSImage(size: size, flipped: true) { rect in
-            let color: NSColor = .black
-            color.setStroke()
-            color.setFill()
-
+            NSColor.black.setStroke()
+            let lw: CGFloat = 1.4
             let midX = rect.midX
-            let lineWidth: CGFloat = 1.5
+            let botY: CGFloat = rect.maxY - 2  // bottom of stem
+            let forkY: CGFloat = rect.midY + 1  // where branches split
+            let tipY: CGFloat = 2               // arrow tips
+            let spread: CGFloat = 5.5           // how far left/right branches go
 
-            // Trident: one stem splitting into three arrows
-            // Stem (bottom center going up)
+            // Stem: bottom center up to fork point
             let stem = NSBezierPath()
-            stem.lineWidth = lineWidth
+            stem.lineWidth = lw
             stem.lineCapStyle = .round
-            stem.move(to: NSPoint(x: midX, y: rect.maxY - 1))
-            stem.line(to: NSPoint(x: midX, y: rect.midY - 1))
+            stem.move(to: NSPoint(x: midX, y: botY))
+            stem.line(to: NSPoint(x: midX, y: forkY))
             stem.stroke()
 
-            // Center arrow (straight up)
-            let center = NSBezierPath()
-            center.lineWidth = lineWidth
-            center.lineCapStyle = .round
-            center.lineJoinStyle = .round
-            center.move(to: NSPoint(x: midX, y: rect.midY - 1))
-            center.line(to: NSPoint(x: midX, y: 1))
-            center.stroke()
+            // Center arrow: fork to top
+            let c = NSBezierPath()
+            c.lineWidth = lw; c.lineCapStyle = .round
+            c.move(to: NSPoint(x: midX, y: forkY))
+            c.line(to: NSPoint(x: midX, y: tipY))
+            c.stroke()
 
-            // Center arrowhead
-            let centerHead = NSBezierPath()
-            centerHead.lineWidth = lineWidth
-            centerHead.lineCapStyle = .round
-            centerHead.lineJoinStyle = .round
-            centerHead.move(to: NSPoint(x: midX - 3, y: 4.5))
-            centerHead.line(to: NSPoint(x: midX, y: 1))
-            centerHead.line(to: NSPoint(x: midX + 3, y: 4.5))
-            centerHead.stroke()
+            // Center chevron
+            let ch = NSBezierPath()
+            ch.lineWidth = lw; ch.lineCapStyle = .round; ch.lineJoinStyle = .round
+            ch.move(to: NSPoint(x: midX - 2.5, y: tipY + 3))
+            ch.line(to: NSPoint(x: midX, y: tipY))
+            ch.line(to: NSPoint(x: midX + 2.5, y: tipY + 3))
+            ch.stroke()
 
-            // Left branch
-            let left = NSBezierPath()
-            left.lineWidth = lineWidth
-            left.lineCapStyle = .round
-            left.lineJoinStyle = .round
-            left.move(to: NSPoint(x: midX, y: rect.midY - 1))
-            left.line(to: NSPoint(x: 3, y: 3))
-            left.stroke()
+            // Left arrow: fork to upper-left
+            let leftTipX = midX - spread
+            let l = NSBezierPath()
+            l.lineWidth = lw; l.lineCapStyle = .round
+            l.move(to: NSPoint(x: midX, y: forkY))
+            l.line(to: NSPoint(x: leftTipX, y: tipY))
+            l.stroke()
 
-            // Left arrowhead
-            let leftHead = NSBezierPath()
-            leftHead.lineWidth = lineWidth
-            leftHead.lineCapStyle = .round
-            leftHead.lineJoinStyle = .round
-            leftHead.move(to: NSPoint(x: 3, y: 7))
-            leftHead.line(to: NSPoint(x: 3, y: 3))
-            leftHead.line(to: NSPoint(x: 7, y: 3))
-            leftHead.stroke()
+            let lh = NSBezierPath()
+            lh.lineWidth = lw; lh.lineCapStyle = .round; lh.lineJoinStyle = .round
+            lh.move(to: NSPoint(x: leftTipX + 2.5, y: tipY))
+            lh.line(to: NSPoint(x: leftTipX, y: tipY))
+            lh.line(to: NSPoint(x: leftTipX, y: tipY + 3))
+            lh.stroke()
 
-            // Right branch
-            let right = NSBezierPath()
-            right.lineWidth = lineWidth
-            right.lineCapStyle = .round
-            right.lineJoinStyle = .round
-            right.move(to: NSPoint(x: midX, y: rect.midY - 1))
-            right.line(to: NSPoint(x: rect.maxX - 3, y: 3))
-            right.stroke()
+            // Right arrow: fork to upper-right
+            let rightTipX = midX + spread
+            let r = NSBezierPath()
+            r.lineWidth = lw; r.lineCapStyle = .round
+            r.move(to: NSPoint(x: midX, y: forkY))
+            r.line(to: NSPoint(x: rightTipX, y: tipY))
+            r.stroke()
 
-            // Right arrowhead
-            let rightHead = NSBezierPath()
-            rightHead.lineWidth = lineWidth
-            rightHead.lineCapStyle = .round
-            rightHead.lineJoinStyle = .round
-            rightHead.move(to: NSPoint(x: rect.maxX - 7, y: 3))
-            rightHead.line(to: NSPoint(x: rect.maxX - 3, y: 3))
-            rightHead.line(to: NSPoint(x: rect.maxX - 3, y: 7))
-            rightHead.stroke()
+            let rh = NSBezierPath()
+            rh.lineWidth = lw; rh.lineCapStyle = .round; rh.lineJoinStyle = .round
+            rh.move(to: NSPoint(x: rightTipX - 2.5, y: tipY))
+            rh.line(to: NSPoint(x: rightTipX, y: tipY))
+            rh.line(to: NSPoint(x: rightTipX, y: tipY + 3))
+            rh.stroke()
 
             return true
         }
