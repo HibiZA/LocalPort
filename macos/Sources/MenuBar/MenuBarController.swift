@@ -201,15 +201,15 @@ final class MenuBarController: NSObject {
     }
 
     private func makeIcon(badge: Bool = false) -> NSImage {
-        let size = NSSize(width: 16, height: 16)
+        let size = NSSize(width: 22, height: 22)
         let image = NSImage(size: size, flipped: true) { rect in
             NSColor.black.setStroke()
-            let lw: CGFloat = 1.4
+            let lw: CGFloat = 1.6
             let midX = rect.midX
-            let botY: CGFloat = rect.maxY - 2  // bottom of stem
-            let forkY: CGFloat = rect.maxY - 5  // where branches split (near bottom)
-            let tipY: CGFloat = 2               // arrow tips
-            let spread: CGFloat = 5.5           // how far left/right branches go
+            let botY: CGFloat = rect.maxY - 3  // bottom of stem
+            let forkY: CGFloat = rect.maxY - 7  // where branches split (near bottom)
+            let tipY: CGFloat = 3               // arrow tips
+            let spread: CGFloat = 7.5           // how far left/right branches go
 
             // Stem: bottom center up to fork point
             let stem = NSBezierPath()
@@ -229,9 +229,9 @@ final class MenuBarController: NSObject {
             // Center chevron (same size as left/right)
             let ch = NSBezierPath()
             ch.lineWidth = lw; ch.lineCapStyle = .round; ch.lineJoinStyle = .round
-            ch.move(to: NSPoint(x: midX - 2, y: tipY + 2.5))
+            ch.move(to: NSPoint(x: midX - 3, y: tipY + 3.5))
             ch.line(to: NSPoint(x: midX, y: tipY))
-            ch.line(to: NSPoint(x: midX + 2, y: tipY + 2.5))
+            ch.line(to: NSPoint(x: midX + 3, y: tipY + 3.5))
             ch.stroke()
 
             // Left arrow: fork to upper-left
@@ -244,9 +244,9 @@ final class MenuBarController: NSObject {
 
             let lh = NSBezierPath()
             lh.lineWidth = lw; lh.lineCapStyle = .round; lh.lineJoinStyle = .round
-            lh.move(to: NSPoint(x: leftTipX + 2.5, y: tipY))
+            lh.move(to: NSPoint(x: leftTipX + 3.5, y: tipY))
             lh.line(to: NSPoint(x: leftTipX, y: tipY))
-            lh.line(to: NSPoint(x: leftTipX, y: tipY + 3))
+            lh.line(to: NSPoint(x: leftTipX, y: tipY + 3.5))
             lh.stroke()
 
             // Right arrow: fork to upper-right
@@ -259,9 +259,9 @@ final class MenuBarController: NSObject {
 
             let rh = NSBezierPath()
             rh.lineWidth = lw; rh.lineCapStyle = .round; rh.lineJoinStyle = .round
-            rh.move(to: NSPoint(x: rightTipX - 2.5, y: tipY))
+            rh.move(to: NSPoint(x: rightTipX - 3.5, y: tipY))
             rh.line(to: NSPoint(x: rightTipX, y: tipY))
-            rh.line(to: NSPoint(x: rightTipX, y: tipY + 3))
+            rh.line(to: NSPoint(x: rightTipX, y: tipY + 3.5))
             rh.stroke()
 
             return true
