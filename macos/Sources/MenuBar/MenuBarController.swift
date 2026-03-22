@@ -202,21 +202,80 @@ final class MenuBarController: NSObject {
 
     private func makeIcon(badge: Bool = false) -> NSImage {
         let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: true) { rect in
+            let color: NSColor = .black
+            color.setStroke()
+            color.setFill()
 
-        // Use the app icon from the bundle
-        if let appIcon = NSImage(named: NSImage.applicationIconName) {
-            let resized = NSImage(size: size, flipped: false) { rect in
-                appIcon.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
-                return true
-            }
-            resized.isTemplate = true
-            return resized
-        }
+            let midX = rect.midX
+            let lineWidth: CGFloat = 1.5
 
-        // Fallback: simple circle
-        let image = NSImage(size: size, flipped: false) { rect in
-            NSColor.labelColor.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
+            // Trident: one stem splitting into three arrows
+            // Stem (bottom center going up)
+            let stem = NSBezierPath()
+            stem.lineWidth = lineWidth
+            stem.lineCapStyle = .round
+            stem.move(to: NSPoint(x: midX, y: rect.maxY - 1))
+            stem.line(to: NSPoint(x: midX, y: rect.midY - 1))
+            stem.stroke()
+
+            // Center arrow (straight up)
+            let center = NSBezierPath()
+            center.lineWidth = lineWidth
+            center.lineCapStyle = .round
+            center.lineJoinStyle = .round
+            center.move(to: NSPoint(x: midX, y: rect.midY - 1))
+            center.line(to: NSPoint(x: midX, y: 1))
+            center.stroke()
+
+            // Center arrowhead
+            let centerHead = NSBezierPath()
+            centerHead.lineWidth = lineWidth
+            centerHead.lineCapStyle = .round
+            centerHead.lineJoinStyle = .round
+            centerHead.move(to: NSPoint(x: midX - 3, y: 4.5))
+            centerHead.line(to: NSPoint(x: midX, y: 1))
+            centerHead.line(to: NSPoint(x: midX + 3, y: 4.5))
+            centerHead.stroke()
+
+            // Left branch
+            let left = NSBezierPath()
+            left.lineWidth = lineWidth
+            left.lineCapStyle = .round
+            left.lineJoinStyle = .round
+            left.move(to: NSPoint(x: midX, y: rect.midY - 1))
+            left.line(to: NSPoint(x: 3, y: 3))
+            left.stroke()
+
+            // Left arrowhead
+            let leftHead = NSBezierPath()
+            leftHead.lineWidth = lineWidth
+            leftHead.lineCapStyle = .round
+            leftHead.lineJoinStyle = .round
+            leftHead.move(to: NSPoint(x: 3, y: 7))
+            leftHead.line(to: NSPoint(x: 3, y: 3))
+            leftHead.line(to: NSPoint(x: 7, y: 3))
+            leftHead.stroke()
+
+            // Right branch
+            let right = NSBezierPath()
+            right.lineWidth = lineWidth
+            right.lineCapStyle = .round
+            right.lineJoinStyle = .round
+            right.move(to: NSPoint(x: midX, y: rect.midY - 1))
+            right.line(to: NSPoint(x: rect.maxX - 3, y: 3))
+            right.stroke()
+
+            // Right arrowhead
+            let rightHead = NSBezierPath()
+            rightHead.lineWidth = lineWidth
+            rightHead.lineCapStyle = .round
+            rightHead.lineJoinStyle = .round
+            rightHead.move(to: NSPoint(x: rect.maxX - 7, y: 3))
+            rightHead.line(to: NSPoint(x: rect.maxX - 3, y: 3))
+            rightHead.line(to: NSPoint(x: rect.maxX - 3, y: 7))
+            rightHead.stroke()
+
             return true
         }
         image.isTemplate = true
