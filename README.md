@@ -125,6 +125,16 @@ log_level = "info"
 dns_port = 5553
 ```
 
+### Per-Project Config
+
+`.localport.toml` in your project root:
+
+```toml
+[project]
+name = "my-app"
+hostname = "my-app"
+```
+
 ## Architecture
 
 ```
