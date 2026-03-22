@@ -33,8 +33,9 @@ cp "$SWIFT_RELEASE/$APP_NAME" "$APP_DIR/Contents/MacOS/"
 cp "$RUST_RELEASE/devspaced" "$APP_DIR/Contents/Helpers/"
 cp "$RUST_RELEASE/devspace" "$APP_DIR/Contents/Helpers/"
 
-# Copy Info.plist
+# Copy Info.plist and icon
 cp macos/Resources/Info.plist "$APP_DIR/Contents/"
+cp macos/Resources/AppIcon.icns "$APP_DIR/Contents/Resources/" 2>/dev/null || true
 
 # Create minimal PkgInfo
 echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
@@ -46,23 +47,57 @@ if [[ "${1:-}" == "--dmg" ]]; then
     echo "  Creating DMG..."
     rm -f "$DMG_PATH"
 
-    # Create a temporary directory for DMG contents
     DMG_STAGING="build/dmg-staging"
+    DMG_TMP="build/${APP_NAME}-tmp.dmg"
+    VOL_NAME="$APP_NAME"
     rm -rf "$DMG_STAGING"
     mkdir -p "$DMG_STAGING"
     cp -r "$APP_DIR" "$DMG_STAGING/"
-
-    # Create a symlink to /Applications for drag-install
     ln -s /Applications "$DMG_STAGING/Applications"
 
-    # Create DMG
-    hdiutil create -volname "$APP_NAME" \
+    # Create a read-write DMG first so we can style it
+    hdiutil create -volname "$VOL_NAME" \
         -srcfolder "$DMG_STAGING" \
-        -ov -format UDZO \
-        "$DMG_PATH" \
+        -ov -format UDRW \
+        "$DMG_TMP" \
         > /dev/null 2>&1
 
+    # Mount it
+    MOUNT_DIR=$(hdiutil attach -readwrite -noverify "$DMG_TMP" | grep "/Volumes/" | sed 's/.*\/Volumes/\/Volumes/')
+
+    # Use AppleScript to style the Finder window
+    osascript <<APPLESCRIPT
+    tell application "Finder"
+        tell disk "$VOL_NAME"
+            open
+            set current view of container window to icon view
+            set toolbar visible of container window to false
+            set statusbar visible of container window to false
+            set bounds of container window to {200, 200, 720, 500}
+            set viewOptions to the icon view options of container window
+            set arrangement of viewOptions to not arranged
+            set icon size of viewOptions to 96
+            set text size of viewOptions to 13
+            set position of item "$APP_NAME.app" of container window to {140, 140}
+            set position of item "Applications" of container window to {380, 140}
+            close
+            open
+            update without registering applications
+            delay 1
+            close
+        end tell
+    end tell
+APPLESCRIPT
+
+    # Unmount
+    hdiutil detach "$MOUNT_DIR" > /dev/null 2>&1 || true
+    sleep 1
+
+    # Convert to compressed read-only DMG
+    hdiutil convert "$DMG_TMP" -format UDZO -o "$DMG_PATH" > /dev/null 2>&1
+    rm -f "$DMG_TMP"
     rm -rf "$DMG_STAGING"
+
     echo "  Built: $DMG_PATH"
 fi
 
