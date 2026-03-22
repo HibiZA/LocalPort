@@ -207,7 +207,7 @@ final class MenuBarController: NSObject {
             let lw: CGFloat = 1.4
             let midX = rect.midX
             let botY: CGFloat = rect.maxY - 2  // bottom of stem
-            let forkY: CGFloat = rect.midY + 1  // where branches split
+            let forkY: CGFloat = rect.maxY - 5  // where branches split (near bottom)
             let tipY: CGFloat = 2               // arrow tips
             let spread: CGFloat = 5.5           // how far left/right branches go
 
