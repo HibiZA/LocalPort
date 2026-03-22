@@ -277,7 +277,7 @@ private struct PreferencesView: View {
         VStack(spacing: 12) {
             Spacer()
 
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(nsImage: Self.loadAppIcon())
                 .resizable()
                 .frame(width: 96, height: 96)
 
@@ -298,6 +298,21 @@ private struct PreferencesView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private static func loadAppIcon() -> NSImage {
+        // Try bundle resource first (works in .app bundle)
+        if let path = Bundle.main.path(forResource: "AppIcon", ofType: "icns"),
+           let img = NSImage(contentsOfFile: path) {
+            return img
+        }
+        // Development fallback: look relative to working directory
+        for devPath in ["macos/Resources/AppIcon.icns", "Resources/AppIcon.icns", "../macos/Resources/AppIcon.icns"] {
+            if let img = NSImage(contentsOfFile: devPath) {
+                return img
+            }
+        }
+        return NSApp.applicationIconImage
     }
 }
 
