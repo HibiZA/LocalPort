@@ -1,7 +1,7 @@
 import AppKit
 
 struct Project: Identifiable, Codable {
-    let id: String
+    var id: String
     var name: String
     var directory: String
     var hostname: String

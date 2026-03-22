@@ -238,19 +238,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dirName = (directory as NSString).lastPathComponent
         let colorIndex = projects.count % colorPalette.count
 
+        // Read .localport.toml if it exists
+        let projectConfig = Self.readProjectConfig(directory: directory)
+        let projectName = projectConfig?["name"] ?? dirName
+        let tld = UserDefaults.standard.string(forKey: PrefKey.tld) ?? "test"
+        let hostname = projectConfig?["hostname"] ?? "\(projectName).\(tld)"
+
         var project = Project(
-            id: dirName,
-            name: dirName,
+            id: projectName,
+            name: projectName,
             directory: directory,
-            hostname: "\(dirName).test",
+            hostname: hostname,
             color: NSColorWrapper(hex: colorPalette[colorIndex])
         )
 
         if daemonClient.isConnected {
             do {
                 let result = try daemonClient.registerProject(directory: directory)
-                if let hostname = result["hostname"] as? String {
-                    project.hostname = hostname
+                if let name = result["name"] as? String {
+                    project.id = name
+                    project.name = name
+                }
+                if let h = result["hostname"] as? String {
+                    project.hostname = h
                 }
             } catch {
                 logger.error("Failed to register project: \(error)")
@@ -278,6 +288,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveProjects()
         updateMenuBar()
         logger.info("Removed project \(projectID)")
+    }
+
+    // MARK: - Project Config File
+
+    /// Reads .localport.toml from a project directory, returns name/hostname if present.
+    private static func readProjectConfig(directory: String) -> [String: String]? {
+        let configPath = (directory as NSString).appendingPathComponent(".localport.toml")
+        guard let content = try? String(contentsOfFile: configPath, encoding: .utf8) else {
+            return nil
+        }
+
+        var result: [String: String] = [:]
+        for line in content.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("[") || trimmed.hasPrefix("#") || trimmed.isEmpty { continue }
+            let parts = trimmed.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let key = parts[0].trimmingCharacters(in: .whitespaces)
+            let value = parts[1].trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            result[key] = value
+        }
+
+        return result.isEmpty ? nil : result
     }
 
     // MARK: - Project Persistence

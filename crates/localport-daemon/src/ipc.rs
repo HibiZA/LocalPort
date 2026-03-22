@@ -1,6 +1,6 @@
 use crate::port_watcher::ProjectRegistry;
 use crate::router::Router;
-use localport_core::validation;
+use localport_core::{config, validation};
 use localport_proto::messages::{self, Response};
 use localport_proto::methods;
 use std::net::SocketAddr;
@@ -107,7 +107,7 @@ impl ConnectionHandler {
         match req.method.as_str() {
             methods::DAEMON_STATUS => self.handle_daemon_status(req.id).await,
             methods::PROJECT_STATUS => self.handle_project_status(req.id).await,
-            methods::PROJECT_INIT => self.handle_project_init(req).await,
+            methods::PROJECT_INIT | "project.register" => self.handle_project_init(req).await,
             methods::ROUTE_ADD => self.handle_route_add(req).await,
             methods::ROUTE_REMOVE => self.handle_route_remove(req).await,
             methods::ROUTE_LIST => self.handle_route_list(req.id).await,
@@ -166,17 +166,37 @@ impl ConnectionHandler {
     }
 
     async fn handle_project_init(&self, req: &messages::Request) -> Response {
-        let name = req.params.get("name").and_then(|v| v.as_str());
-        let directory = req.params.get("directory").and_then(|v| v.as_str());
+        let directory = req
+            .params
+            .get("directory")
+            .or_else(|| req.params.get("dir"))
+            .and_then(|v| v.as_str());
 
-        let (name, directory) = match (name, directory) {
-            (Some(n), Some(d)) => (n.to_string(), PathBuf::from(d)),
-            _ => {
+        let directory = match directory {
+            Some(d) => PathBuf::from(d),
+            None => {
                 return Response::error(
                     req.id,
                     messages::INVALID_PARAMS,
-                    "missing 'name' or 'directory' param".into(),
+                    "missing 'directory' param".into(),
                 );
+            }
+        };
+
+        // Resolve name: explicit param > .localport.toml > directory basename
+        let explicit_name = req.params.get("name").and_then(|v| v.as_str());
+        let (name, hostname_override) = if let Some(n) = explicit_name {
+            (n.to_string(), None)
+        } else {
+            match config::load_project_config(&directory) {
+                Ok(cfg) => (cfg.project.name.clone(), cfg.project.hostname.clone()),
+                Err(_) => {
+                    let fallback = directory
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unnamed".to_string());
+                    (fallback, None)
+                }
             }
         };
 
@@ -193,12 +213,15 @@ impl ConnectionHandler {
             .await
             .register(directory.clone(), name.clone());
 
+        let hostname = hostname_override
+            .unwrap_or_else(|| format!("{}.{}", name, self.tld));
+
         Response::success(
             req.id,
             serde_json::json!({
                 "name": name,
                 "directory": directory.to_string_lossy(),
-                "hostname": format!("{}.{}", name, self.tld),
+                "hostname": hostname,
             }),
         )
     }

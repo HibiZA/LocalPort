@@ -125,14 +125,14 @@ log_level = "info"
 dns_port = 5553
 ```
 
-### Per-Project Config
+### Per-Project Config (Optional)
 
-`.localport.toml` in your project root:
+You can add a `.localport.toml` to your project root to override the default name and hostname. Without this file, LocalPort uses the directory name.
 
 ```toml
 [project]
 name = "my-app"
-hostname = "my-app"
+hostname = "my-app.test"
 ```
 
 ## Architecture
