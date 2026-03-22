@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.devspace.app", category: "MenuBar")
+private let logger = Logger(subsystem: "com.localport.app", category: "MenuBar")
 
 protocol MenuBarControllerDelegate: AnyObject {
     func menuBarDidSelectProject(_ projectID: String)
@@ -63,7 +63,7 @@ final class MenuBarController: NSObject {
         // Header
         let header = NSMenuItem()
         header.attributedTitle = NSAttributedString(
-            string: "DevSpace",
+            string: "LocalPort",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
             ]
@@ -184,7 +184,7 @@ final class MenuBarController: NSObject {
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Quit DevSpace", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit LocalPort", action: #selector(quit), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = .command
         quitItem.target = self
         menu.addItem(quitItem)

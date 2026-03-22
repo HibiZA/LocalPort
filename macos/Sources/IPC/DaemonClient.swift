@@ -1,9 +1,9 @@
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "com.devspace.app", category: "DaemonClient")
+private let logger = Logger(subsystem: "com.localport.app", category: "DaemonClient")
 
-/// JSON-RPC 2.0 client that communicates with the DevSpace daemon over a Unix socket.
+/// JSON-RPC 2.0 client that communicates with the LocalPort daemon over a Unix socket.
 final class DaemonClient {
     private let socketPath: String
     private var inputStream: InputStream?
@@ -11,7 +11,7 @@ final class DaemonClient {
     private var requestID: Int = 0
     private var pendingCallbacks: [Int: (Result<Any, Error>) -> Void] = [:]
     private var readBuffer = Data()
-    private let queue = DispatchQueue(label: "com.devspace.daemon-client", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.localport.daemon-client", qos: .userInitiated)
 
     var onEvent: ((String, [String: Any]) -> Void)?
     private(set) var isConnected = false
@@ -22,7 +22,7 @@ final class DaemonClient {
 
     private static func defaultSocketPath() -> String {
         let uid = getuid()
-        return "/tmp/devspace-\(uid).sock"
+        return "/tmp/localport-\(uid).sock"
     }
 
     // MARK: - Connection

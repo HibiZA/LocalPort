@@ -34,18 +34,18 @@ jobs:
       - name: Upload app bundle
         uses: actions/upload-artifact@v4
         with:
-          name: DevSpace.app
-          path: build/DevSpace.app
+          name: LocalPort.app
+          path: build/LocalPort.app
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
-          name: DevSpace.dmg
-          path: build/DevSpace.dmg
+          name: LocalPort.dmg
+          path: build/LocalPort.dmg
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/DevSpace.dmg
+          files: build/LocalPort.dmg
           generate_release_notes: true

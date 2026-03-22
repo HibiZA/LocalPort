@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum DevSpaceError {
+pub enum LocalPortError {
     #[error("config error: {0}")]
     Config(String),
 

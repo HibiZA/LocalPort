@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="https://github.com/HibiZA/DevSpace/releases/download/v0.1.2/DevSpace.dmg" width="0" height="0" />
-  <h1 align="center">DevSpace</h1>
+  <img src="https://github.com/HibiZA/LocalPort/releases/download/v0.1.2/LocalPort.dmg" width="0" height="0" />
+  <h1 align="center">LocalPort</h1>
   <p align="center">Local hostnames for every project. No more port numbers.</p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/HibiZA/DevSpace/releases/latest"><strong>Download</strong></a> &nbsp;&middot;&nbsp;
+  <a href="https://github.com/HibiZA/LocalPort/releases/latest"><strong>Download</strong></a> &nbsp;&middot;&nbsp;
   <a href="#install">Install</a> &nbsp;&middot;&nbsp;
   <a href="#how-it-works">How It Works</a> &nbsp;&middot;&nbsp;
   <a href="#configuration">Configuration</a>
@@ -27,7 +27,7 @@ Cookies and localStorage bleed across projects because they all share the `local
 
 ## The Solution
 
-DevSpace gives each project its own hostname:
+LocalPort gives each project its own hostname:
 
 ```
 https://myapp.test     → localhost:3000
@@ -39,19 +39,19 @@ https://dashboard.test → localhost:5173
 - **Clean OAuth redirects** — configure `https://myapp.test/callback` in Google Console
 - **No port memorization** — just use the project name
 - **Auto-HTTPS** — Caddy handles TLS with an internal CA
-- **Zero config** — start your dev server, DevSpace detects it automatically
+- **Zero config** — start your dev server, LocalPort detects it automatically
 
 ## How It Works
 
-1. Add a project from the menu bar (click the DevSpace icon → **Add Project...**)
+1. Add a project from the menu bar (click the LocalPort icon → **Add Project...**)
 2. Start your dev server however you normally do
-3. DevSpace auto-detects the listening port and maps it to `yourproject.test`
+3. LocalPort auto-detects the listening port and maps it to `yourproject.test`
 4. Open `https://yourproject.test` in your browser
 
 The menu bar app shows which projects are running and on which ports:
 
 ```
-DevSpace
+LocalPort
 ────────────────────────────────
 ● my-app
     my-app.test · :3000 · running
@@ -62,29 +62,29 @@ DevSpace
 ────────────────────────────────
 Add Project...
 Preferences...
-Quit DevSpace
+Quit LocalPort
 ```
 
 ## Install
 
 ### Download
 
-Grab the latest `.dmg` from [**Releases**](https://github.com/HibiZA/DevSpace/releases/latest), open it, and drag DevSpace to Applications.
+Grab the latest `.dmg` from [**Releases**](https://github.com/HibiZA/LocalPort/releases/latest), open it, and drag LocalPort to Applications.
 
 On first launch, macOS will show an "unidentified developer" warning. Go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/HibiZA/DevSpace.git
-cd DevSpace
+git clone https://github.com/HibiZA/LocalPort.git
+cd LocalPort
 bash scripts/build.sh
-cp -r build/DevSpace.app /Applications/
+cp -r build/LocalPort.app /Applications/
 ```
 
 ### First Launch
 
-On first launch, DevSpace will ask for your password to:
+On first launch, LocalPort will ask for your password to:
 - Set up DNS resolution for `*.test` domains
 - Install Caddy's root CA for trusted local HTTPS
 - Configure port forwarding (80 → 8080, 443 → 8443)
@@ -93,23 +93,23 @@ Caddy is auto-downloaded if not already installed. This only happens once.
 
 ## Usage
 
-1. Click the DevSpace icon in the menu bar → **Add Project...**
+1. Click the LocalPort icon in the menu bar → **Add Project...**
 2. Select your project directory
 3. Start your dev server as usual:
 
 ```bash
 cd ~/projects/my-app
 npm run dev
-# DevSpace auto-detects it — visit https://my-app.test
+# LocalPort auto-detects it — visit https://my-app.test
 ```
 
-That's it. DevSpace handles the rest.
+That's it. LocalPort handles the rest.
 
 ## Configuration
 
 ### Global Config
 
-`~/.config/devspace/config.toml`:
+`~/.config/localport/config.toml`:
 
 ```toml
 # TLD for project hostnames (default: "test")
@@ -127,7 +127,7 @@ dns_port = 5553
 
 ### Per-Project Config
 
-`.devspace.toml` in your project root:
+`.localport.toml` in your project root:
 
 ```toml
 [project]
@@ -155,8 +155,8 @@ Browser → https://myapp.test
 
 | Component | Language | Purpose |
 |-----------|----------|---------|
-| `DevSpace.app` | Swift | macOS menu bar app — manages everything |
-| `devspaced` | Rust | Daemon — Caddy management, DNS responder, port watcher, IPC |
+| `LocalPort.app` | Swift | macOS menu bar app — manages everything |
+| `localportd` | Rust | Daemon — Caddy management, DNS responder, port watcher, IPC |
 | Caddy | Go | Reverse proxy with automatic HTTPS (auto-downloaded) |
 
 ### How Port Detection Works

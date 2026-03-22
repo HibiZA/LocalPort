@@ -1,8 +1,8 @@
 use crate::port_watcher::ProjectRegistry;
 use crate::router::Router;
-use devspace_core::validation;
-use devspace_proto::messages::{self, Response};
-use devspace_proto::methods;
+use localport_core::validation;
+use localport_proto::messages::{self, Response};
+use localport_proto::methods;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;

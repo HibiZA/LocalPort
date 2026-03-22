@@ -3,13 +3,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-APP_NAME="DevSpace"
+APP_NAME="LocalPort"
 APP_DIR="build/${APP_NAME}.app"
 DMG_PATH="build/${APP_NAME}.dmg"
 RUST_RELEASE="target/release"
 SWIFT_RELEASE="macos/.build/release"
 
-echo "=== Building DevSpace ==="
+echo "=== Building LocalPort ==="
 
 # 1. Build Rust binaries
 echo "  Building Rust (daemon + CLI)..."
@@ -30,7 +30,7 @@ mkdir -p "$APP_DIR/Contents/Resources"
 cp "$SWIFT_RELEASE/$APP_NAME" "$APP_DIR/Contents/MacOS/"
 
 # Copy daemon binary
-cp "$RUST_RELEASE/devspaced" "$APP_DIR/Contents/Helpers/"
+cp "$RUST_RELEASE/localportd" "$APP_DIR/Contents/Helpers/"
 
 # Copy Info.plist, app icon, and menu bar icon
 cp macos/Resources/Info.plist "$APP_DIR/Contents/"
@@ -43,7 +43,7 @@ echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
 # 4. Ad-hoc code sign (removes "damaged" Gatekeeper error)
 echo "  Signing..."
-codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/devspaced"
+codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/localportd"
 codesign --force --deep --sign - "$APP_DIR"
 
 echo "  Built: $APP_DIR"

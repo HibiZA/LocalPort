@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/devspace-core",
-    "crates/devspace-proto",
-    "crates/devspace-daemon",
+    "crates/localport-core",
+    "crates/localport-proto",
+    "crates/localport-daemon",
 ]
 
 [workspace.dependencies]

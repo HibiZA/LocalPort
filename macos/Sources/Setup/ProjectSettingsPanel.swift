@@ -170,7 +170,7 @@ final class ProjectSettingsPanel: NSPanel {
     private func confirmRemove(projectID: String) {
         let alert = NSAlert()
         alert.messageText = "Remove Project?"
-        alert.informativeText = "This will unregister the project from DevSpace. Your files will not be deleted."
+        alert.informativeText = "This will unregister the project from LocalPort. Your files will not be deleted."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Remove")
         alert.addButton(withTitle: "Cancel")

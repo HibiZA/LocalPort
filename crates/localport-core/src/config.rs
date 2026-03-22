@@ -1,10 +1,10 @@
-use crate::error::DevSpaceError;
+use crate::error::LocalPortError;
 use crate::types::ProjectConfig;
 use crate::validation;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Global daemon configuration (~/.config/devspace/config.toml)
+/// Global daemon configuration (~/.config/localport/config.toml)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     #[serde(default = "default_tld")]
@@ -90,7 +90,7 @@ impl Default for DaemonConfig {
 }
 
 impl GlobalConfig {
-    /// Returns the path to the bundled caddy binary: ~/.config/devspace/bin/caddy
+    /// Returns the path to the bundled caddy binary: ~/.config/localport/bin/caddy
     pub fn caddy_bin_path() -> PathBuf {
         Self::config_dir().join("bin").join("caddy")
     }
@@ -105,9 +105,9 @@ impl GlobalConfig {
         self.caddy.bin.clone()
     }
 
-    pub fn validate(&self) -> Result<(), DevSpaceError> {
+    pub fn validate(&self) -> Result<(), LocalPortError> {
         if !validation::is_valid_tld(&self.tld) {
-            return Err(DevSpaceError::Config(format!(
+            return Err(LocalPortError::Config(format!(
                 "invalid tld '{}': must contain only lowercase alphanumerics and hyphens",
                 self.tld
             )));
@@ -115,12 +115,12 @@ impl GlobalConfig {
         Ok(())
     }
 
-    pub fn load() -> Result<Self, DevSpaceError> {
+    pub fn load() -> Result<Self, LocalPortError> {
         let path = global_config_path();
         let config = if path.exists() {
-            let content = std::fs::read_to_string(&path).map_err(DevSpaceError::Io)?;
+            let content = std::fs::read_to_string(&path).map_err(LocalPortError::Io)?;
             toml::from_str(&content).map_err(|e| {
-                DevSpaceError::Config(format!("failed to parse {}: {}", path.display(), e))
+                LocalPortError::Config(format!("failed to parse {}: {}", path.display(), e))
             })?
         } else {
             Self::default()
@@ -146,17 +146,17 @@ impl GlobalConfig {
     }
 }
 
-pub fn load_project_config(dir: &Path) -> Result<ProjectConfig, DevSpaceError> {
-    let config_path = dir.join(".devspace.toml");
+pub fn load_project_config(dir: &Path) -> Result<ProjectConfig, LocalPortError> {
+    let config_path = dir.join(".localport.toml");
     if !config_path.exists() {
-        return Err(DevSpaceError::Config(format!(
-            "no .devspace.toml found in {}",
+        return Err(LocalPortError::Config(format!(
+            "no .localport.toml found in {}",
             dir.display()
         )));
     }
-    let content = std::fs::read_to_string(&config_path).map_err(DevSpaceError::Io)?;
+    let content = std::fs::read_to_string(&config_path).map_err(LocalPortError::Io)?;
     toml::from_str(&content)
-        .map_err(|e| DevSpaceError::Config(format!("failed to parse .devspace.toml: {}", e)))
+        .map_err(|e| LocalPortError::Config(format!("failed to parse .localport.toml: {}", e)))
 }
 
 pub fn global_config_path() -> PathBuf {
@@ -166,7 +166,7 @@ pub fn global_config_path() -> PathBuf {
 pub fn default_socket_path() -> PathBuf {
     // SAFETY: getuid() is always safe — no preconditions, no side effects.
     let uid = unsafe { libc::getuid() };
-    PathBuf::from(format!("/tmp/devspace-{}.sock", uid))
+    PathBuf::from(format!("/tmp/localport-{}.sock", uid))
 }
 
 fn dirs_path(kind: &str) -> PathBuf {

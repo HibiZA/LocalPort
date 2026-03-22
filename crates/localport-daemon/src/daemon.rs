@@ -3,7 +3,7 @@ use crate::dns::DnsResponder;
 use crate::ipc::IpcServer;
 use crate::port_watcher::{PortWatcher, ProjectRegistry};
 use crate::router::Router;
-use devspace_core::config::GlobalConfig;
+use localport_core::config::GlobalConfig;
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::{watch, Notify, RwLock};
@@ -47,7 +47,7 @@ impl Daemon {
         });
 
         // Start DNS responder (only for non-localhost TLDs)
-        if config.tld != devspace_core::validation::LOCALHOST_TLD {
+        if config.tld != localport_core::validation::LOCALHOST_TLD {
             let dns = DnsResponder::new(config.daemon.dns_port);
             let dns_shutdown = shutdown_rx.clone();
             tokio::spawn(async move {
@@ -80,7 +80,7 @@ impl Daemon {
             }
         });
 
-        tracing::info!("devspaced is running (socket: {})", socket_path.display());
+        tracing::info!("localportd is running (socket: {})", socket_path.display());
 
         // Wait for shutdown signal (Ctrl+C or IPC shutdown request)
         let mut shutdown_wait = shutdown_rx.clone();
@@ -104,7 +104,7 @@ impl Daemon {
         })
         .await;
 
-        tracing::info!("devspaced stopped");
+        tracing::info!("localportd stopped");
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 use crate::router::Router;
 use anyhow::Result;
-use devspace_core::config::GlobalConfig;
+use localport_core::config::GlobalConfig;
 use std::sync::Arc;
 use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
@@ -130,7 +130,7 @@ impl CaddyManager {
     pub(crate) fn generate_caddyfile(&self, routes: &[(String, std::net::SocketAddr)]) -> String {
         let mut cf = String::new();
 
-        if self.config.tld == devspace_core::validation::LOCALHOST_TLD {
+        if self.config.tld == localport_core::validation::LOCALHOST_TLD {
             // Localhost mode: HTTP only, single port, host-based matching
             cf.push_str(&format!(
                 "{{\n    admin localhost:2019\n    http_port {}\n}}\n\n",
@@ -160,7 +160,7 @@ impl CaddyManager {
     }
 }
 
-/// Download the Caddy binary to ~/.config/devspace/bin/caddy
+/// Download the Caddy binary to ~/.config/localport/bin/caddy
 async fn download_caddy() -> Result<()> {
     let arch = if cfg!(target_arch = "aarch64") {
         "arm64"

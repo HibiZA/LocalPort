@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "DevSpace",
+    name: "LocalPort",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "DevSpace",
+            name: "LocalPort",
             path: "Sources",
             linkerSettings: [
                 .linkedFramework("AppKit"),

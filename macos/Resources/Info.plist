@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.devspace.app</string>
+    <string>com.localport.app</string>
     <key>CFBundleName</key>
-    <string>DevSpace</string>
+    <string>LocalPort</string>
     <key>CFBundleDisplayName</key>
-    <string>DevSpace</string>
+    <string>LocalPort</string>
     <key>CFBundleExecutable</key>
-    <string>DevSpace</string>
+    <string>LocalPort</string>
     <key>CFBundleVersion</key>
     <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>
@@ -25,6 +25,6 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSAccessibilityUsageDescription</key>
-    <string>DevSpace needs accessibility access to track and manage your project windows.</string>
+    <string>LocalPort needs accessibility access to track and manage your project windows.</string>
 </dict>
 </plist>

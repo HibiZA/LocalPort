@@ -36,41 +36,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "devspace-core"
-version = "0.1.0"
-dependencies = [
- "libc",
- "serde",
- "serde_json",
- "thiserror",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "devspace-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "devspace-core",
- "devspace-proto",
- "libc",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "devspace-proto"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -119,6 +84,41 @@ name = "libc"
 version = "0.2.181"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "459427e2af2b9c839b132acb702a1c654d95e10f8c326bfc2ad11310e458b1c5"
+
+[[package]]
+name = "localport-core"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "localport-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "localport-core",
+ "localport-proto",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "localport-proto"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "lock_api"

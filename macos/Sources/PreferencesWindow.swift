@@ -3,7 +3,7 @@ import ServiceManagement
 import SwiftUI
 import os.log
 
-private let logger = Logger(subsystem: "com.devspace.app", category: "Preferences")
+private let logger = Logger(subsystem: "com.localport.app", category: "Preferences")
 
 /// Keys for UserDefaults persistence
 enum PrefKey {
@@ -281,7 +281,7 @@ private struct PreferencesView: View {
                 .resizable()
                 .frame(width: 96, height: 96)
 
-            Text("DevSpace")
+            Text("LocalPort")
                 .font(.title.bold())
 
             Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.2")")
@@ -292,7 +292,7 @@ private struct PreferencesView: View {
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal)
 
-            Link("GitHub", destination: URL(string: "https://github.com/HibiZA/DevSpace")!)
+            Link("GitHub", destination: URL(string: "https://github.com/HibiZA/LocalPort")!)
                 .foregroundStyle(.blue)
 
             Spacer()

@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.devspace.app", category: "AppDelegate")
+private let logger = Logger(subsystem: "com.localport.app", category: "AppDelegate")
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - App Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        logger.info("DevSpace starting up")
+        logger.info("LocalPort starting up")
 
         // Hide dock icon — we're a menu bar app
         NSApp.setActivationPolicy(.accessory)
@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.refreshProjectsFromDaemon()
         }
 
-        logger.info("DevSpace ready")
+        logger.info("LocalPort ready")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -78,11 +78,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do shell script "
             mkdir -p /etc/resolver
             echo 'nameserver 127.0.0.1\\nport 5553' > /etc/resolver/\(tld)
-            cat > /etc/pf.anchors/devspace << 'PF'
+            cat > /etc/pf.anchors/localport << 'PF'
             rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080
             rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443
         PF
-            pfctl -a devspace -f /etc/pf.anchors/devspace 2>/dev/null
+            pfctl -a localport -f /etc/pf.anchors/localport 2>/dev/null
             pfctl -e 2>/dev/null
         " with administrator privileges
         """
@@ -99,10 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Install Caddy root CA (runs as current user, may prompt for keychain password)
         let bundlePath = Bundle.main.bundlePath
-        let caddyPath = bundlePath + "/Contents/Helpers/devspaced"
+        let caddyPath = bundlePath + "/Contents/Helpers/localportd"
         // Caddy trust needs the caddy binary — check bundled location
         let caddyBinPaths = [
-            "\(NSHomeDirectory())/.config/devspace/bin/caddy",
+            "\(NSHomeDirectory())/.config/localport/bin/caddy",
             "/opt/homebrew/bin/caddy",
             "/usr/local/bin/caddy",
         ]
@@ -143,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startBundledDaemon() {
         let bundlePath = Bundle.main.bundlePath
-        let helperPath = bundlePath + "/Contents/Helpers/devspaced"
+        let helperPath = bundlePath + "/Contents/Helpers/localportd"
 
         guard FileManager.default.fileExists(atPath: helperPath) else {
             logger.info("No bundled daemon found at \(helperPath), expecting external daemon")
@@ -151,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let uid = getuid()
-        let socketPath = "/tmp/devspace-\(uid).sock"
+        let socketPath = "/tmp/localport-\(uid).sock"
         if FileManager.default.fileExists(atPath: socketPath) {
             logger.info("Daemon socket already exists, skipping launch")
             return

@@ -16,10 +16,10 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let config = devspace_core::config::GlobalConfig::load()
+    let config = localport_core::config::GlobalConfig::load()
         .map_err(|e| anyhow::anyhow!("failed to load config: {}", e))?;
 
-    tracing::info!("devspaced starting (tld: .{})", config.tld);
+    tracing::info!("localportd starting (tld: .{})", config.tld);
 
     daemon::Daemon::run(config).await
 }

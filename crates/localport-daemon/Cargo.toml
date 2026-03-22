@@ -1,15 +1,15 @@
 [package]
-name = "devspace-daemon"
+name = "localport-daemon"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "devspaced"
+name = "localportd"
 path = "src/main.rs"
 
 [dependencies]
-devspace-core = { path = "../devspace-core" }
-devspace-proto = { path = "../devspace-proto" }
+localport-core = { path = "../localport-core" }
+localport-proto = { path = "../localport-proto" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
