@@ -42,6 +42,12 @@ cp macos/Resources/MenuBarIcon@2x.png "$APP_DIR/Contents/Resources/" 2>/dev/null
 # Create minimal PkgInfo
 echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
+# 4. Ad-hoc code sign (removes "damaged" Gatekeeper error)
+echo "  Signing..."
+codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/devspaced"
+codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/devspace"
+codesign --force --deep --sign - "$APP_DIR"
+
 echo "  Built: $APP_DIR"
 
 # 4. Create .dmg if requested
