@@ -33,6 +33,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController.delegate = self
         menuBarController.setup()
 
+        // Listen for uninstall request from Preferences
+        NotificationCenter.default.addObserver(
+            forName: .localportUninstallRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.performUninstall()
+        }
+
         // Load saved projects
         loadProjects()
 
@@ -85,6 +94,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sanitizedTLD = tld.filter { $0.isLetter || $0.isNumber }
         guard !sanitizedTLD.isEmpty else {
             logger.error("Invalid TLD: \(tld)")
+            return
+        }
+
+        // Check if setup was already done (e.g. by a previous install)
+        if FileManager.default.fileExists(atPath: "/etc/resolver/\(sanitizedTLD)") {
+            UserDefaults.standard.set(true, forKey: "setupComplete")
+            logger.info("Setup already done, skipping")
             return
         }
 
@@ -516,7 +532,7 @@ extension AppDelegate: MenuBarControllerDelegate {
         }
     }
 
-    func menuBarDidRequestUninstall() {
+    private func performUninstall() {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 

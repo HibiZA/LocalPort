@@ -11,7 +11,6 @@ protocol MenuBarControllerDelegate: AnyObject {
     func menuBarDidRequestUpdate()
     func menuBarDidRequestStartDaemon()
     func menuBarDidRequestStopDaemon()
-    func menuBarDidRequestUninstall()
     func menuBarDidRequestQuit()
 }
 
@@ -194,10 +193,6 @@ final class MenuBarController: NSObject {
 
         menu.addItem(.separator())
 
-        let uninstallItem = NSMenuItem(title: "Uninstall LocalPort...", action: #selector(uninstall), keyEquivalent: "")
-        uninstallItem.target = self
-        menu.addItem(uninstallItem)
-
         let quitItem = NSMenuItem(title: "Quit LocalPort", action: #selector(quit), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = .command
         quitItem.target = self
@@ -283,10 +278,6 @@ final class MenuBarController: NSObject {
 
     @objc private func stopDaemon() {
         delegate?.menuBarDidRequestStopDaemon()
-    }
-
-    @objc private func uninstall() {
-        delegate?.menuBarDidRequestUninstall()
     }
 
     @objc private func openUpdate() {
