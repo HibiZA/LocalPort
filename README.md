@@ -15,13 +15,15 @@
 
 ## The Problem
 
-When you're working on multiple projects at the same time, you end up with:
+AI coding agents have changed how developers work. Tools like Claude Code, Cursor, and Copilot Workspace make it easy to spin up and iterate on multiple projects at once — you might have an agent building a frontend in one terminal, another scaffolding an API, and a third prototyping a microservice, all running simultaneously.
+
+But your local environment wasn't built for this. You end up with:
 
 - `localhost:3000` — is that the frontend or the API?
 - `localhost:3001` — which project was this again?
 - `localhost:8080` — did I already kill the old server?
 
-Cookies and localStorage bleed across projects because they all share the `localhost` origin. OAuth redirect URIs become a mess — you can't tell Google "send auth callbacks to `localhost:3000`" when three different apps are fighting over that port.
+Cookies and localStorage bleed across projects because they all share the `localhost` origin. OAuth redirect URIs become a mess — you can't tell Google "send auth callbacks to `localhost:3000`" when three different apps are fighting over that port. The more projects you run in parallel, the worse it gets.
 
 ## The Solution
 
