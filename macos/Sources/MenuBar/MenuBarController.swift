@@ -234,39 +234,40 @@ final class MenuBarController: NSObject {
             ch.line(to: NSPoint(x: midX + 3, y: tipY + 3.5))
             ch.stroke()
 
-            // Left arrow: diagonal out then straight up
+            // Left arrow: diagonal out then straight up (shorter than center)
             let leftTipX = midX - spread
             let elbowY: CGFloat = rect.midY  // where diagonal becomes vertical
+            let sideTipY: CGFloat = tipY + 4  // side arrows stop higher (shorter)
             let l = NSBezierPath()
             l.lineWidth = lw; l.lineCapStyle = .round; l.lineJoinStyle = .round
             l.move(to: NSPoint(x: midX, y: forkY))
-            l.line(to: NSPoint(x: leftTipX, y: elbowY))  // diagonal
-            l.line(to: NSPoint(x: leftTipX, y: tipY))     // straight up
+            l.line(to: NSPoint(x: leftTipX, y: elbowY))     // diagonal
+            l.line(to: NSPoint(x: leftTipX, y: sideTipY))    // straight up
             l.stroke()
 
             // Left chevron
             let lh = NSBezierPath()
             lh.lineWidth = lw; lh.lineCapStyle = .round; lh.lineJoinStyle = .round
-            lh.move(to: NSPoint(x: leftTipX - 3, y: tipY + 3.5))
-            lh.line(to: NSPoint(x: leftTipX, y: tipY))
-            lh.line(to: NSPoint(x: leftTipX + 3, y: tipY + 3.5))
+            lh.move(to: NSPoint(x: leftTipX - 3, y: sideTipY + 3.5))
+            lh.line(to: NSPoint(x: leftTipX, y: sideTipY))
+            lh.line(to: NSPoint(x: leftTipX + 3, y: sideTipY + 3.5))
             lh.stroke()
 
-            // Right arrow: diagonal out then straight up
+            // Right arrow: diagonal out then straight up (shorter than center)
             let rightTipX = midX + spread
             let r = NSBezierPath()
             r.lineWidth = lw; r.lineCapStyle = .round; r.lineJoinStyle = .round
             r.move(to: NSPoint(x: midX, y: forkY))
-            r.line(to: NSPoint(x: rightTipX, y: elbowY))  // diagonal
-            r.line(to: NSPoint(x: rightTipX, y: tipY))     // straight up
+            r.line(to: NSPoint(x: rightTipX, y: elbowY))     // diagonal
+            r.line(to: NSPoint(x: rightTipX, y: sideTipY))    // straight up
             r.stroke()
 
             // Right chevron
             let rh = NSBezierPath()
             rh.lineWidth = lw; rh.lineCapStyle = .round; rh.lineJoinStyle = .round
-            rh.move(to: NSPoint(x: rightTipX - 3, y: tipY + 3.5))
-            rh.line(to: NSPoint(x: rightTipX, y: tipY))
-            rh.line(to: NSPoint(x: rightTipX + 3, y: tipY + 3.5))
+            rh.move(to: NSPoint(x: rightTipX - 3, y: sideTipY + 3.5))
+            rh.line(to: NSPoint(x: rightTipX, y: sideTipY))
+            rh.line(to: NSPoint(x: rightTipX + 3, y: sideTipY + 3.5))
             rh.stroke()
 
             return true
