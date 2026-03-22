@@ -9,6 +9,9 @@ DMG_PATH="build/${APP_NAME}.dmg"
 RUST_RELEASE="target/release"
 SWIFT_RELEASE="macos/.build/release"
 
+# Derive version from latest git tag (e.g. v0.1.4 -> 0.1.4)
+VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
+
 echo "=== Building LocalPort ==="
 
 # 1. Build Rust binaries
@@ -32,8 +35,11 @@ cp "$SWIFT_RELEASE/$APP_NAME" "$APP_DIR/Contents/MacOS/"
 # Copy daemon binary
 cp "$RUST_RELEASE/localportd" "$APP_DIR/Contents/Helpers/"
 
-# Copy Info.plist, app icon, and menu bar icon
+# Copy Info.plist and stamp version from git tag
 cp macos/Resources/Info.plist "$APP_DIR/Contents/"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_DIR/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_DIR/Contents/Info.plist"
+echo "  Version: $VERSION"
 cp macos/Resources/AppIcon.icns "$APP_DIR/Contents/Resources/" 2>/dev/null || true
 cp macos/Resources/MenuBarIcon.png "$APP_DIR/Contents/Resources/" 2>/dev/null || true
 cp macos/Resources/MenuBarIcon@2x.png "$APP_DIR/Contents/Resources/" 2>/dev/null || true

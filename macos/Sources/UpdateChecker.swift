@@ -3,7 +3,12 @@ import os.log
 
 private let logger = Logger(subsystem: "com.localport.app", category: "UpdateChecker")
 
-let appVersion = "0.1.4"
+let appVersion: String = {
+    if let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, v != "0.0.0" {
+        return v
+    }
+    return "dev"
+}()
 
 final class UpdateChecker {
     private let owner = "HibiZA"
