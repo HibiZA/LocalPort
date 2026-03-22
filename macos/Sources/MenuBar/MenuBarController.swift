@@ -226,12 +226,12 @@ final class MenuBarController: NSObject {
             c.line(to: NSPoint(x: midX, y: tipY))
             c.stroke()
 
-            // Center chevron
+            // Center chevron (same size as left/right)
             let ch = NSBezierPath()
             ch.lineWidth = lw; ch.lineCapStyle = .round; ch.lineJoinStyle = .round
-            ch.move(to: NSPoint(x: midX - 2.5, y: tipY + 3))
+            ch.move(to: NSPoint(x: midX - 2, y: tipY + 2.5))
             ch.line(to: NSPoint(x: midX, y: tipY))
-            ch.line(to: NSPoint(x: midX + 2.5, y: tipY + 3))
+            ch.line(to: NSPoint(x: midX + 2, y: tipY + 2.5))
             ch.stroke()
 
             // Left arrow: fork to upper-left
