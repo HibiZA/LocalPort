@@ -15,7 +15,7 @@
 
 ## The Problem
 
-AI coding agents have changed how developers work. Tools like Claude Code, Cursor, and Copilot Workspace make it easy to spin up and iterate on multiple projects at once — you might have an agent building a frontend in one terminal, another scaffolding an API, and a third prototyping a microservice, all running simultaneously.
+AI coding agents have changed how developers work. Tools like Claude Code, Cursor, and Codex make it easy to spin up and iterate on multiple projects at once — you might have an agent building a frontend in one terminal, another scaffolding an API, and a third prototyping a microservice, all running simultaneously.
 
 But your local environment wasn't built for this. You end up with:
 
