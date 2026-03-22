@@ -32,7 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController.delegate = self
         menuBarController.setup()
 
-        // Start
+        // Run first-time setup if needed
+        if !UserDefaults.standard.bool(forKey: "setupComplete") {
+            runFirstTimeSetup()
+        }
+
         // Load saved projects
         loadProjects()
 
@@ -56,6 +60,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         daemonPollTimer?.invalidate()
         daemonClient.disconnect()
         stopBundledDaemon()
+    }
+
+    // MARK: - First-Time Setup
+
+    private func runFirstTimeSetup() {
+        let tld = UserDefaults.standard.string(forKey: PrefKey.tld) ?? "test"
+        guard tld != "localhost" else {
+            UserDefaults.standard.set(true, forKey: "setupComplete")
+            return
+        }
+
+        logger.info("Running first-time setup")
+
+        // Build the privileged script that creates DNS resolver + pfctl rules
+        let script = """
+        do shell script "
+            mkdir -p /etc/resolver
+            echo 'nameserver 127.0.0.1\\nport 5553' > /etc/resolver/\(tld)
+            cat > /etc/pf.anchors/devspace << 'PF'
+            rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080
+            rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443
+        PF
+            pfctl -a devspace -f /etc/pf.anchors/devspace 2>/dev/null
+            pfctl -e 2>/dev/null
+        " with administrator privileges
+        """
+
+        let appleScript = NSAppleScript(source: script)
+        var error: NSDictionary?
+        appleScript?.executeAndReturnError(&error)
+
+        if let error = error {
+            logger.error("Setup script failed: \(error)")
+            // Don't mark complete — will retry next launch
+            return
+        }
+
+        // Install Caddy root CA (runs as current user, may prompt for keychain password)
+        let bundlePath = Bundle.main.bundlePath
+        let caddyPath = bundlePath + "/Contents/Helpers/devspaced"
+        // Caddy trust needs the caddy binary — check bundled location
+        let caddyBinPaths = [
+            "\(NSHomeDirectory())/.config/devspace/bin/caddy",
+            "/opt/homebrew/bin/caddy",
+            "/usr/local/bin/caddy",
+        ]
+        for path in caddyBinPaths {
+            if FileManager.default.fileExists(atPath: path) {
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: path)
+                task.arguments = ["trust"]
+                task.standardOutput = FileHandle.nullDevice
+                task.standardError = FileHandle.nullDevice
+                try? task.run()
+                task.waitUntilExit()
+                if task.terminationStatus == 0 {
+                    logger.info("Caddy root CA installed")
+                }
+                break
+            }
+        }
+
+        UserDefaults.standard.set(true, forKey: "setupComplete")
+        logger.info("First-time setup complete")
     }
 
     // MARK: - Daemon Connection

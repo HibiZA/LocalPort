@@ -29,9 +29,8 @@ mkdir -p "$APP_DIR/Contents/Resources"
 # Copy main executable
 cp "$SWIFT_RELEASE/$APP_NAME" "$APP_DIR/Contents/MacOS/"
 
-# Copy helper binaries
+# Copy daemon binary
 cp "$RUST_RELEASE/devspaced" "$APP_DIR/Contents/Helpers/"
-cp "$RUST_RELEASE/devspace" "$APP_DIR/Contents/Helpers/"
 
 # Copy Info.plist, app icon, and menu bar icon
 cp macos/Resources/Info.plist "$APP_DIR/Contents/"
@@ -45,7 +44,6 @@ echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 # 4. Ad-hoc code sign (removes "damaged" Gatekeeper error)
 echo "  Signing..."
 codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/devspaced"
-codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/devspace"
 codesign --force --deep --sign - "$APP_DIR"
 
 echo "  Built: $APP_DIR"
@@ -112,6 +110,3 @@ fi
 echo ""
 echo "  To install:"
 echo "    cp -r $APP_DIR /Applications/"
-echo ""
-echo "  To install the CLI:"
-echo "    ln -sf /Applications/DevSpace.app/Contents/Helpers/devspace /usr/local/bin/devspace"

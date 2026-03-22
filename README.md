@@ -82,30 +82,20 @@ bash scripts/build.sh
 cp -r build/DevSpace.app /Applications/
 ```
 
-### CLI Setup
+### First Launch
 
-The CLI is bundled inside the app. To add it to your PATH:
+On first launch, DevSpace will ask for your password to:
+- Set up DNS resolution for `*.test` domains
+- Install Caddy's root CA for trusted local HTTPS
+- Configure port forwarding (80 → 8080, 443 → 8443)
 
-```bash
-ln -sf /Applications/DevSpace.app/Contents/Helpers/devspace /usr/local/bin/devspace
-```
-
-### First-Time Setup
-
-```bash
-devspace setup
-```
-
-This runs one-time system configuration (requires sudo):
-- Creates `/etc/resolver/test` for `*.test` DNS resolution
-- Installs Caddy's root CA for trusted local HTTPS
-- Sets up port forwarding so you don't need `:8443` in URLs
-
-Caddy is auto-downloaded on first run if not already installed.
+Caddy is auto-downloaded if not already installed. This only happens once.
 
 ## Usage
 
-Add a project from the menu bar, then start your dev server as usual:
+1. Click the DevSpace icon in the menu bar → **Add Project...**
+2. Select your project directory
+3. Start your dev server as usual:
 
 ```bash
 cd ~/projects/my-app
@@ -113,23 +103,7 @@ npm run dev
 # DevSpace auto-detects it — visit https://my-app.test
 ```
 
-Or use the CLI:
-
-```bash
-devspace init           # register current directory
-devspace status         # see what's running
-```
-
-### CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `devspace init` | Register the current directory as a project |
-| `devspace status` | Show all projects and active routes |
-| `devspace setup` | One-time system setup (DNS, HTTPS, port forwarding) |
-| `devspace daemon start` | Start the daemon manually |
-| `devspace daemon stop` | Stop the daemon |
-| `devspace daemon status` | Show daemon info |
+That's it. DevSpace handles the rest.
 
 ## Configuration
 
@@ -181,9 +155,8 @@ Browser → https://myapp.test
 
 | Component | Language | Purpose |
 |-----------|----------|---------|
+| `DevSpace.app` | Swift | macOS menu bar app — manages everything |
 | `devspaced` | Rust | Daemon — Caddy management, DNS responder, port watcher, IPC |
-| `devspace` | Rust | CLI — project init, status, setup |
-| `DevSpace.app` | Swift | macOS menu bar app — status display, preferences |
 | Caddy | Go | Reverse proxy with automatic HTTPS (auto-downloaded) |
 
 ### How Port Detection Works

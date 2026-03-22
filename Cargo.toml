@@ -4,7 +4,6 @@ members = [
     "crates/devspace-core",
     "crates/devspace-proto",
     "crates/devspace-daemon",
-    "crates/devspace-cli",
 ]
 
 [workspace.dependencies]
