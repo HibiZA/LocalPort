@@ -5,6 +5,10 @@ import os.log
 
 private let logger = Logger(subsystem: "com.localport.app", category: "Preferences")
 
+extension Notification.Name {
+    static let localportUninstallRequested = Notification.Name("localportUninstallRequested")
+}
+
 /// Keys for UserDefaults persistence
 enum PrefKey {
     static let tld = "tld"
@@ -234,6 +238,20 @@ private struct PreferencesView: View {
                             launchAtLogin = !val
                         }
                     }
+                    .disabled(!Bundle.main.bundlePath.hasPrefix("/Applications"))
+
+                if !Bundle.main.bundlePath.hasPrefix("/Applications") {
+                    Text("Move LocalPort to /Applications to enable this")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
+                Button("Uninstall LocalPort...", role: .destructive) {
+                    NotificationCenter.default.post(name: .localportUninstallRequested, object: nil)
+                }
+                .foregroundStyle(.red)
             }
         }
         .formStyle(.grouped)
