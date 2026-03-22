@@ -138,7 +138,7 @@ impl GlobalConfig {
     }
 
     pub fn config_dir() -> PathBuf {
-        dirs_path("config").join("devspace")
+        dirs_path("config").join("localport")
     }
 
     pub fn caddyfile_path(&self) -> PathBuf {
@@ -160,7 +160,7 @@ pub fn load_project_config(dir: &Path) -> Result<ProjectConfig, LocalPortError> 
 }
 
 pub fn global_config_path() -> PathBuf {
-    dirs_path("config").join("devspace").join("config.toml")
+    dirs_path("config").join("localport").join("config.toml")
 }
 
 pub fn default_socket_path() -> PathBuf {
