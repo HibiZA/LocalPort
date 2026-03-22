@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Subsystems
     let menuBarController = MenuBarController()
     let daemonClient = DaemonClient()
+    let updateChecker = UpdateChecker()
 
     // State
     private var projects: [Project] = []
@@ -44,6 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             updateMenuBar()
         }
 
+        // Check for updates
+        updateChecker.onUpdateAvailable = { [weak self] version in
+            self?.menuBarController.showUpdateAvailable(version: version)
+        }
+        updateChecker.startChecking()
+
         // Connect to daemon
         connectToDaemon()
 
@@ -58,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         saveProjects()
         daemonPollTimer?.invalidate()
+        updateChecker.stop()
         daemonClient.disconnect()
         stopBundledDaemon()
     }
@@ -366,6 +374,12 @@ extension AppDelegate: MenuBarControllerDelegate {
     func menuBarDidRequestPreferences() {
         let prefsController = PreferencesWindowController.shared
         prefsController.showWindow()
+    }
+
+    func menuBarDidRequestUpdate() {
+        if let url = updateChecker.releaseURL {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     func menuBarDidRequestQuit() {

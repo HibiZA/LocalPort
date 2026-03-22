@@ -8,6 +8,7 @@ protocol MenuBarControllerDelegate: AnyObject {
     func menuBarDidRequestProjectSettings(_ projectID: String)
     func menuBarDidRequestAddProject()
     func menuBarDidRequestPreferences()
+    func menuBarDidRequestUpdate()
     func menuBarDidRequestQuit()
 }
 
@@ -21,6 +22,7 @@ final class MenuBarController: NSObject {
 
     // Notification tracking per project
     private var pendingNotifications: [String: Int] = [:]
+    private var availableUpdate: String?
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -52,6 +54,11 @@ final class MenuBarController: NSObject {
     func clearNotifications(for projectID: String) {
         pendingNotifications.removeValue(forKey: projectID)
         updateBadge()
+    }
+
+    func showUpdateAvailable(version: String) {
+        availableUpdate = version
+        // Trigger a menu rebuild on next open
     }
 
     // MARK: - Menu Construction
@@ -182,6 +189,21 @@ final class MenuBarController: NSObject {
         prefsItem.target = self
         menu.addItem(prefsItem)
 
+        if let version = availableUpdate {
+            menu.addItem(.separator())
+            let updateItem = NSMenuItem()
+            updateItem.attributedTitle = NSAttributedString(
+                string: "Update Available: v\(version)",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                    .foregroundColor: NSColor.systemBlue,
+                ]
+            )
+            updateItem.target = self
+            updateItem.action = #selector(openUpdate)
+            menu.addItem(updateItem)
+        }
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit LocalPort", action: #selector(quit), keyEquivalent: "q")
@@ -261,6 +283,10 @@ final class MenuBarController: NSObject {
 
     @objc private func openPreferences() {
         delegate?.menuBarDidRequestPreferences()
+    }
+
+    @objc private func openUpdate() {
+        delegate?.menuBarDidRequestUpdate()
     }
 
     @objc private func quit() {

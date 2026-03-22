@@ -284,7 +284,7 @@ private struct PreferencesView: View {
             Text("LocalPort")
                 .font(.title.bold())
 
-            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.2")")
+            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? appVersion)")
                 .foregroundStyle(.secondary)
 
             Text("Run multiple projects with unique local hostnames.\nNo more remembering port numbers.")
