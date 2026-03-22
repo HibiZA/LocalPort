@@ -98,8 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Install Caddy root CA (runs as current user, may prompt for keychain password)
-        let bundlePath = Bundle.main.bundlePath
-        let caddyPath = bundlePath + "/Contents/Helpers/localportd"
         // Caddy trust needs the caddy binary — check bundled location
         let caddyBinPaths = [
             "\(NSHomeDirectory())/.config/localport/bin/caddy",
