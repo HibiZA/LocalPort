@@ -43,7 +43,7 @@ https://dashboard.test → localhost:5173
 
 ## How It Works
 
-1. Register a project: `devspace init` in any project directory
+1. Add a project from the menu bar (click the DevSpace icon → **Add Project...**)
 2. Start your dev server however you normally do
 3. DevSpace auto-detects the listening port and maps it to `yourproject.test`
 4. Open `https://yourproject.test` in your browser
@@ -105,18 +105,19 @@ Caddy is auto-downloaded on first run if not already installed.
 
 ## Usage
 
+Add a project from the menu bar, then start your dev server as usual:
+
 ```bash
-# Initialize a project
 cd ~/projects/my-app
-devspace init
-
-# Start your dev server as usual
 npm run dev
-
 # DevSpace auto-detects it — visit https://my-app.test
+```
 
-# Check what's running
-devspace status
+Or use the CLI:
+
+```bash
+devspace init           # register current directory
+devspace status         # see what's running
 ```
 
 ### CLI Commands
