@@ -202,34 +202,24 @@ final class MenuBarController: NSObject {
 
     private func makeIcon(badge: Bool = false) -> NSImage {
         let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size, flipped: false) { rect in
-            // Simple grid icon representing window groups
-            let color: NSColor = badge ? .systemBlue : .labelColor
-            color.setFill()
 
-            let gap: CGFloat = 2
-            let cellW = (rect.width - gap) / 2
-            let cellH = (rect.height - gap) / 2
-
-            NSBezierPath(roundedRect: CGRect(x: 0, y: cellH + gap, width: cellW, height: cellH),
-                         xRadius: 2, yRadius: 2).fill()
-            NSBezierPath(roundedRect: CGRect(x: cellW + gap, y: cellH + gap, width: cellW, height: cellH),
-                         xRadius: 2, yRadius: 2).fill()
-            NSBezierPath(roundedRect: CGRect(x: 0, y: 0, width: cellW, height: cellH),
-                         xRadius: 2, yRadius: 2).fill()
-            NSBezierPath(roundedRect: CGRect(x: cellW + gap, y: 0, width: cellW, height: cellH),
-                         xRadius: 2, yRadius: 2).fill()
-
-            if badge {
-                // Red badge dot
-                NSColor.systemRed.setFill()
-                let badgeRect = CGRect(x: rect.width - 6, y: rect.height - 6, width: 6, height: 6)
-                NSBezierPath(ovalIn: badgeRect).fill()
+        // Use the app icon from the bundle
+        if let appIcon = NSImage(named: NSImage.applicationIconName) {
+            let resized = NSImage(size: size, flipped: false) { rect in
+                appIcon.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                return true
             }
+            resized.isTemplate = true
+            return resized
+        }
 
+        // Fallback: simple circle
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.labelColor.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
             return true
         }
-        image.isTemplate = !badge
+        image.isTemplate = true
         return image
     }
 
