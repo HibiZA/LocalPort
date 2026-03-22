@@ -33,9 +33,11 @@ cp "$SWIFT_RELEASE/$APP_NAME" "$APP_DIR/Contents/MacOS/"
 cp "$RUST_RELEASE/devspaced" "$APP_DIR/Contents/Helpers/"
 cp "$RUST_RELEASE/devspace" "$APP_DIR/Contents/Helpers/"
 
-# Copy Info.plist and icon
+# Copy Info.plist, app icon, and menu bar icon
 cp macos/Resources/Info.plist "$APP_DIR/Contents/"
 cp macos/Resources/AppIcon.icns "$APP_DIR/Contents/Resources/" 2>/dev/null || true
+cp macos/Resources/MenuBarIcon.png "$APP_DIR/Contents/Resources/" 2>/dev/null || true
+cp macos/Resources/MenuBarIcon@2x.png "$APP_DIR/Contents/Resources/" 2>/dev/null || true
 
 # Create minimal PkgInfo
 echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"

@@ -201,75 +201,42 @@ final class MenuBarController: NSObject {
     }
 
     private func makeIcon(badge: Bool = false) -> NSImage {
-        let size = NSSize(width: 22, height: 22)
-        let image = NSImage(size: size, flipped: true) { rect in
-            NSColor.black.setStroke()
-            let lw: CGFloat = 1.6
-            let midX = rect.midX
-            let botY: CGFloat = rect.maxY - 3  // bottom of stem
-            let forkY: CGFloat = rect.maxY - 7  // where branches split (near bottom)
-            let tipY: CGFloat = 3               // arrow tips
-            let spread: CGFloat = 7.5           // how far left/right branches go
+        // Load the icon image from the app bundle's Resources
+        let bundle = Bundle.main
+        let size = NSSize(width: 18, height: 18)
 
-            // Stem: bottom center up to fork point
-            let stem = NSBezierPath()
-            stem.lineWidth = lw
-            stem.lineCapStyle = .round
-            stem.move(to: NSPoint(x: midX, y: botY))
-            stem.line(to: NSPoint(x: midX, y: forkY))
-            stem.stroke()
+        // Try @2x first, fall back to 1x
+        if let path = bundle.path(forResource: "MenuBarIcon@2x", ofType: "png"),
+           let img = NSImage(contentsOfFile: path) {
+            img.size = size
+            img.isTemplate = true
+            return img
+        }
+        if let path = bundle.path(forResource: "MenuBarIcon", ofType: "png"),
+           let img = NSImage(contentsOfFile: path) {
+            img.size = size
+            img.isTemplate = true
+            return img
+        }
 
-            // Center arrow: fork to top
-            let c = NSBezierPath()
-            c.lineWidth = lw; c.lineCapStyle = .round
-            c.move(to: NSPoint(x: midX, y: forkY))
-            c.line(to: NSPoint(x: midX, y: tipY))
-            c.stroke()
+        // During development (no bundle), load from source tree
+        let devPaths = [
+            "macos/Resources/MenuBarIcon@2x.png",
+            "Resources/MenuBarIcon@2x.png",
+            "../macos/Resources/MenuBarIcon@2x.png",
+        ]
+        for devPath in devPaths {
+            if let img = NSImage(contentsOfFile: devPath) {
+                img.size = size
+                img.isTemplate = true
+                return img
+            }
+        }
 
-            // Center chevron (same size as left/right)
-            let ch = NSBezierPath()
-            ch.lineWidth = lw; ch.lineCapStyle = .round; ch.lineJoinStyle = .round
-            ch.move(to: NSPoint(x: midX - 3, y: tipY + 3.5))
-            ch.line(to: NSPoint(x: midX, y: tipY))
-            ch.line(to: NSPoint(x: midX + 3, y: tipY + 3.5))
-            ch.stroke()
-
-            // Left arrow: diagonal out then straight up (shorter than center)
-            let leftTipX = midX - spread
-            let elbowY: CGFloat = rect.midY  // where diagonal becomes vertical
-            let sideTipY: CGFloat = tipY + 4  // side arrows stop higher (shorter)
-            let l = NSBezierPath()
-            l.lineWidth = lw; l.lineCapStyle = .round; l.lineJoinStyle = .round
-            l.move(to: NSPoint(x: midX, y: forkY))
-            l.line(to: NSPoint(x: leftTipX, y: elbowY))     // diagonal
-            l.line(to: NSPoint(x: leftTipX, y: sideTipY))    // straight up
-            l.stroke()
-
-            // Left chevron
-            let lh = NSBezierPath()
-            lh.lineWidth = lw; lh.lineCapStyle = .round; lh.lineJoinStyle = .round
-            lh.move(to: NSPoint(x: leftTipX - 3, y: sideTipY + 3.5))
-            lh.line(to: NSPoint(x: leftTipX, y: sideTipY))
-            lh.line(to: NSPoint(x: leftTipX + 3, y: sideTipY + 3.5))
-            lh.stroke()
-
-            // Right arrow: diagonal out then straight up (shorter than center)
-            let rightTipX = midX + spread
-            let r = NSBezierPath()
-            r.lineWidth = lw; r.lineCapStyle = .round; r.lineJoinStyle = .round
-            r.move(to: NSPoint(x: midX, y: forkY))
-            r.line(to: NSPoint(x: rightTipX, y: elbowY))     // diagonal
-            r.line(to: NSPoint(x: rightTipX, y: sideTipY))    // straight up
-            r.stroke()
-
-            // Right chevron
-            let rh = NSBezierPath()
-            rh.lineWidth = lw; rh.lineCapStyle = .round; rh.lineJoinStyle = .round
-            rh.move(to: NSPoint(x: rightTipX - 3, y: sideTipY + 3.5))
-            rh.line(to: NSPoint(x: rightTipX, y: sideTipY))
-            rh.line(to: NSPoint(x: rightTipX + 3, y: sideTipY + 3.5))
-            rh.stroke()
-
+        // Final fallback: simple dot
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 4, dy: 4)).fill()
             return true
         }
         image.isTemplate = true
