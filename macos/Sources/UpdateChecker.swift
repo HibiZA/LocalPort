@@ -29,6 +29,7 @@ final class UpdateChecker {
     }
 
     func startChecking(interval: TimeInterval = 3600) {
+        guard appVersion != "dev" else { return }
         check()
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.check()
