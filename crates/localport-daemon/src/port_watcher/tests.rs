@@ -149,7 +149,8 @@ async fn test_scan_creates_route_for_listener_in_project_dir() {
         .await
         .register(cwd, "test-project".into());
 
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+    let scan_notify = Arc::new(tokio::sync::Notify::new());
+    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -192,7 +193,8 @@ async fn test_scan_ignores_listener_outside_project_dir() {
         .await
         .register(PathBuf::from("/nonexistent/fake-project"), "fake".into());
 
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+    let scan_notify = Arc::new(tokio::sync::Notify::new());
+    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -216,7 +218,8 @@ async fn test_scan_picks_up_project_registered_after_listener_started() {
     let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
     let cwd = std::env::current_dir().unwrap();
 
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+    let scan_notify = Arc::new(tokio::sync::Notify::new());
+    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -251,7 +254,8 @@ async fn test_scan_skips_when_no_projects_registered() {
     let router = Arc::new(RwLock::new(Router::new(notify)));
     let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
 
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+    let scan_notify = Arc::new(tokio::sync::Notify::new());
+    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
 
@@ -272,7 +276,8 @@ async fn test_empty_scan_does_not_nuke_active_routes() {
     let cwd = std::env::current_dir().unwrap();
     projects.write().await.register(cwd, "myapp".into());
 
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+    let scan_notify = Arc::new(tokio::sync::Notify::new());
+    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
 
     // Seed active_routes as if a previous scan found a listener.
     let mut active_routes = HashMap::new();
@@ -354,7 +359,8 @@ async fn test_scan_re_evaluates_routes_when_more_specific_project_added() {
         .await
         .register(cwd.clone(), "parent".into());
 
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+    let scan_notify = Arc::new(tokio::sync::Notify::new());
+    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();

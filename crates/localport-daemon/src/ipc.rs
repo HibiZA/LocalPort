@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::{watch, RwLock};
+use tokio::sync::{watch, Notify, RwLock};
 
 pub struct IpcServer {
     socket_path: PathBuf,
@@ -16,6 +16,7 @@ pub struct IpcServer {
     projects: Arc<RwLock<ProjectRegistry>>,
     tld: String,
     shutdown_tx: watch::Sender<bool>,
+    scan_notify: Arc<Notify>,
 }
 
 impl IpcServer {
@@ -25,6 +26,7 @@ impl IpcServer {
         projects: Arc<RwLock<ProjectRegistry>>,
         tld: String,
         shutdown_tx: watch::Sender<bool>,
+        scan_notify: Arc<Notify>,
     ) -> Self {
         Self {
             socket_path,
@@ -32,6 +34,7 @@ impl IpcServer {
             projects,
             tld,
             shutdown_tx,
+            scan_notify,
         }
     }
 
@@ -51,6 +54,7 @@ impl IpcServer {
                         projects: self.projects.clone(),
                         tld: self.tld.clone(),
                         shutdown_tx: self.shutdown_tx.clone(),
+                        scan_notify: self.scan_notify.clone(),
                     };
                     tokio::spawn(async move {
                         if let Err(e) = handler.handle(stream).await {
@@ -75,6 +79,7 @@ struct ConnectionHandler {
     projects: Arc<RwLock<ProjectRegistry>>,
     tld: String,
     shutdown_tx: watch::Sender<bool>,
+    scan_notify: Arc<Notify>,
 }
 
 impl ConnectionHandler {
@@ -108,6 +113,7 @@ impl ConnectionHandler {
             methods::DAEMON_STATUS => self.handle_daemon_status(req.id).await,
             methods::PROJECT_STATUS => self.handle_project_status(req.id).await,
             methods::PROJECT_INIT | "project.register" => self.handle_project_init(req).await,
+            methods::PROJECT_REMOVE => self.handle_project_remove(req).await,
             methods::ROUTE_ADD => self.handle_route_add(req).await,
             methods::ROUTE_REMOVE => self.handle_route_remove(req).await,
             methods::ROUTE_LIST => self.handle_route_list(req.id).await,
@@ -223,6 +229,10 @@ impl ConnectionHandler {
         let hostname = hostname_override
             .unwrap_or_else(|| format!("{}.{}", name, self.tld));
 
+        // Trigger an immediate port scan so already-running processes in this
+        // directory are picked up without waiting for the next 2-second tick.
+        self.scan_notify.notify_one();
+
         Response::success(
             req.id,
             serde_json::json!({
@@ -230,6 +240,52 @@ impl ConnectionHandler {
                 "directory": directory.to_string_lossy(),
                 "hostname": hostname,
             }),
+        )
+    }
+
+    async fn handle_project_remove(&self, req: &messages::Request) -> Response {
+        let directory = req
+            .params
+            .get("directory")
+            .or_else(|| req.params.get("dir"))
+            .and_then(|v| v.as_str());
+
+        let directory = match directory {
+            Some(d) => std::path::PathBuf::from(d),
+            None => {
+                return Response::error(
+                    req.id,
+                    messages::INVALID_PARAMS,
+                    "missing 'directory' param".into(),
+                );
+            }
+        };
+
+        // Look up the project name before removing, so we can clean up its routes.
+        let project_name = self
+            .projects
+            .read()
+            .await
+            .find_project_for_dir(&directory)
+            .map(|s| s.to_string());
+
+        let removed = self.projects.write().await.unregister(&directory);
+
+        if removed {
+            // Remove routes that belonged to this project.
+            if let Some(name) = &project_name {
+                let hostname = format!("{}.{}", name, self.tld);
+                self.router.write().await.remove_route(&hostname);
+                tracing::info!("removed route {} and unregistered project at {}", hostname, directory.display());
+            }
+
+            // Trigger an immediate scan to reconcile state.
+            self.scan_notify.notify_one();
+        }
+
+        Response::success(
+            req.id,
+            serde_json::json!({ "removed": removed }),
         )
     }
 

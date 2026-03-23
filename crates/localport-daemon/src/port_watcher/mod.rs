@@ -7,7 +7,7 @@ use crate::router::Router;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{watch, RwLock};
+use tokio::sync::{Notify, RwLock};
 use tokio::time::{interval, Duration};
 
 use libproc::libproc::file_info::{pidfdinfo, ListFDs, ProcFDType};
@@ -28,6 +28,9 @@ pub struct PortWatcher {
     projects: Arc<RwLock<ProjectRegistry>>,
     tld: String,
     interval: Duration,
+    /// Notified when a project is registered so we scan immediately instead of
+    /// waiting for the next tick.
+    scan_notify: Arc<Notify>,
 }
 
 /// Registry of known project directories.
@@ -100,16 +103,18 @@ impl PortWatcher {
         router: Arc<RwLock<Router>>,
         projects: Arc<RwLock<ProjectRegistry>>,
         tld: String,
+        scan_notify: Arc<Notify>,
     ) -> Self {
         Self {
             router,
             projects,
             tld,
             interval: Duration::from_secs(2),
+            scan_notify,
         }
     }
 
-    pub async fn run(&self, mut shutdown: watch::Receiver<bool>) {
+    pub async fn run(&self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
         let mut ticker = interval(self.interval);
         // Track what we've already routed: port -> hostname
         let mut active_routes: HashMap<u16, String> = HashMap::new();
@@ -120,6 +125,12 @@ impl PortWatcher {
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
+                    if let Err(e) = self.scan(&mut active_routes, &mut last_generation).await {
+                        tracing::debug!("port scan error: {}", e);
+                    }
+                }
+                _ = self.scan_notify.notified() => {
+                    tracing::info!("immediate scan triggered (project registered)");
                     if let Err(e) = self.scan(&mut active_routes, &mut last_generation).await {
                         tracing::debug!("port scan error: {}", e);
                     }
