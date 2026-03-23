@@ -5,6 +5,16 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/HibiZA/LocalPort/releases/latest"><img src="https://img.shields.io/github/v/release/HibiZA/LocalPort?style=flat-square&label=release&color=blue" alt="Latest Release"></a>
+  <a href="https://github.com/HibiZA/LocalPort/blob/main/LICENSE"><img src="https://img.shields.io/github/license/HibiZA/LocalPort?style=flat-square&color=green" alt="License"></a>
+  <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/rust-%E2%9C%93-orange?style=flat-square&logo=rust" alt="Rust">
+  <img src="https://img.shields.io/badge/swift-%E2%9C%93-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
+  <a href="https://github.com/HibiZA/LocalPort/stargazers"><img src="https://img.shields.io/github/stars/HibiZA/LocalPort?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/HibiZA/LocalPort/issues"><img src="https://img.shields.io/github/issues/HibiZA/LocalPort?style=flat-square" alt="Issues"></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/HibiZA/LocalPort/releases/latest"><strong>Download</strong></a> &nbsp;&middot;&nbsp;
   <a href="#install">Install</a> &nbsp;&middot;&nbsp;
   <a href="#how-it-works">How It Works</a> &nbsp;&middot;&nbsp;
