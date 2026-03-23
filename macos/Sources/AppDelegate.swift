@@ -140,34 +140,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Install Caddy root CA (runs as current user, may prompt for keychain password)
-        // Caddy trust needs the caddy binary — check bundled location
-        let caddyBinPaths = [
-            "\(NSHomeDirectory())/.config/localport/bin/caddy",
-            "/opt/homebrew/bin/caddy",
-            "/usr/local/bin/caddy",
-        ]
-        for path in caddyBinPaths {
-            if FileManager.default.fileExists(atPath: path) {
-                let task = Process()
-                task.executableURL = URL(fileURLWithPath: path)
-                task.arguments = ["trust"]
-                task.standardOutput = FileHandle.nullDevice
-                task.standardError = FileHandle.nullDevice
-                try? task.run()
-                task.waitUntilExit()
-                if task.terminationStatus == 0 {
-                    logger.info("Caddy root CA installed")
-                }
-                break
-            }
-        }
-
         UserDefaults.standard.set(true, forKey: "setupComplete")
         logger.info("First-time setup complete")
     }
 
     // MARK: - Daemon Connection
+
+    private func trustCaddyCA() {
+        let caPath = NSHomeDirectory() + "/Library/Application Support/Caddy/pki/authorities/local/root.crt"
+        guard FileManager.default.fileExists(atPath: caPath) else {
+            return
+        }
+
+        // Check if already trusted in keychain
+        let checkTask = Process()
+        checkTask.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        checkTask.arguments = ["find-certificate", "-c", "Caddy Local Authority"]
+        checkTask.standardOutput = FileHandle.nullDevice
+        checkTask.standardError = FileHandle.nullDevice
+        try? checkTask.run()
+        checkTask.waitUntilExit()
+        if checkTask.terminationStatus == 0 {
+            return // Already trusted
+        }
+
+        // Add to system keychain and mark as trusted (requires admin)
+        let script = "do shell script \"security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain '\(caPath)'\" with administrator privileges"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        try? task.run()
+        task.waitUntilExit()
+        if task.terminationStatus == 0 {
+            logger.info("Caddy root CA trusted in system keychain")
+        }
+    }
 
     private func connectToDaemon() {
         startDaemon()
@@ -181,6 +190,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.refreshProjectsFromDaemon()
             } catch {
                 logger.warning("Could not connect to daemon: \(error). Running in standalone mode.")
+            }
+
+            // Trust Caddy CA in background (after daemon has had time to download Caddy)
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                self?.trustCaddyCA()
             }
         }
     }
