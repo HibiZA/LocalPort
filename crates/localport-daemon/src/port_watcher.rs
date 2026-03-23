@@ -95,28 +95,38 @@ pub struct PortWatcher {
 pub struct ProjectRegistry {
     /// Maps project directory -> project name
     projects: HashMap<PathBuf, String>,
+    /// Incremented on every register/unregister so the port watcher knows
+    /// when to re-evaluate existing routes against the updated registry.
+    generation: u64,
 }
 
 impl ProjectRegistry {
     pub fn register(&mut self, directory: PathBuf, name: String) {
         tracing::info!("registered project '{}' at {}", name, directory.display());
         self.projects.insert(directory, name);
+        self.generation += 1;
     }
 
     #[allow(dead_code)]
     pub fn unregister(&mut self, directory: &std::path::Path) -> bool {
-        self.projects.remove(directory).is_some()
+        let removed = self.projects.remove(directory).is_some();
+        if removed {
+            self.generation += 1;
+        }
+        removed
     }
 
-    /// Find which project owns the given directory (checks if dir starts with any project dir).
-    #[allow(dead_code)]
+    /// Find which project owns the given directory.
+    ///
+    /// When multiple registered directories match (e.g. `/a/b` and `/a/b/c`
+    /// both match a CWD of `/a/b/c/src`), the **most specific** (longest path)
+    /// wins. This lets monorepo sub-apps override the parent project.
     pub fn find_project_for_dir(&self, dir: &std::path::Path) -> Option<&str> {
-        for (project_dir, name) in &self.projects {
-            if dir.starts_with(project_dir) {
-                return Some(name.as_str());
-            }
-        }
-        None
+        self.projects
+            .iter()
+            .filter(|(project_dir, _)| dir.starts_with(project_dir))
+            .max_by_key(|(project_dir, _)| project_dir.as_os_str().len())
+            .map(|(_, name)| name.as_str())
     }
 
     pub fn list(&self) -> Vec<(PathBuf, String)> {
@@ -128,6 +138,10 @@ impl ProjectRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.projects.is_empty()
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 }
 
@@ -159,11 +173,14 @@ impl PortWatcher {
         let mut ticker = interval(self.interval);
         // Track what we've already routed: port -> hostname
         let mut active_routes: HashMap<u16, String> = HashMap::new();
+        // Track the project registry generation so we re-evaluate routes
+        // when projects are added or removed at runtime.
+        let mut last_generation: u64 = 0;
 
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    if let Err(e) = self.scan(&mut active_routes).await {
+                    if let Err(e) = self.scan(&mut active_routes, &mut last_generation).await {
                         tracing::debug!("port scan error: {}", e);
                     }
                 }
@@ -175,10 +192,34 @@ impl PortWatcher {
         }
     }
 
-    async fn scan(&self, active_routes: &mut HashMap<u16, String>) -> anyhow::Result<()> {
-        // Skip scanning if no projects are registered yet.
+    async fn scan(
+        &self,
+        active_routes: &mut HashMap<u16, String>,
+        last_generation: &mut u64,
+    ) -> anyhow::Result<()> {
+        // Check if the project registry changed since our last scan.
+        let current_generation = self.projects.read().await.generation();
         if self.projects.read().await.is_empty() {
             return Ok(());
+        }
+
+        // If projects were added/removed, clear active_routes so every
+        // listener is re-evaluated against the updated registry. This
+        // handles the case where a more specific sub-project was registered
+        // after a parent directory already claimed a port.
+        if current_generation != *last_generation {
+            if *last_generation > 0 {
+                tracing::info!(
+                    "project registry changed (gen {} -> {}) — re-evaluating all routes",
+                    last_generation,
+                    current_generation
+                );
+                // Remove all existing routes so they can be re-matched.
+                for (_port, hostname) in active_routes.drain() {
+                    self.router.write().await.remove_route(&hostname);
+                }
+            }
+            *last_generation = current_generation;
         }
 
         let listeners = discover_listeners().await?;
@@ -197,10 +238,8 @@ impl PortWatcher {
         // Track which ports are still active
         let mut seen_ports = std::collections::HashSet::new();
 
-        // Collect the set of registered project directories so we can check
-        // against all listeners — including ones that were previously unmatched
-        // because the project wasn't registered yet.
-        let project_dirs = self.projects.read().await.list();
+        // Snapshot the project registry for matching.
+        let registry = self.projects.read().await;
 
         for listener in &listeners {
             seen_ports.insert(listener.port);
@@ -223,11 +262,8 @@ impl PortWatcher {
                 }
             };
 
-            // Check if CWD matches any registered project.
-            let project_name = project_dirs
-                .iter()
-                .find(|(dir, _)| cwd.starts_with(dir))
-                .map(|(_, name)| name.clone());
+            // Check if CWD matches any registered project (most specific wins).
+            let project_name = registry.find_project_for_dir(&cwd);
 
             if let Some(project_name) = project_name {
                 let hostname = format!("{}.{}", project_name, self.tld);
@@ -246,6 +282,9 @@ impl PortWatcher {
                 active_routes.insert(listener.port, hostname);
             }
         }
+
+        // Must drop the registry read lock before acquiring write locks below.
+        drop(registry);
 
         // Remove routes for ports that are no longer listening
         let stale_ports: Vec<u16> = active_routes
@@ -560,7 +599,8 @@ mod tests {
 
         // Run one scan cycle.
         let mut active_routes = HashMap::new();
-        watcher.scan(&mut active_routes).await.unwrap();
+        let mut gen = 0u64;
+        watcher.scan(&mut active_routes, &mut gen).await.unwrap();
 
         // Verify the route was created.
         assert!(
@@ -578,7 +618,7 @@ mod tests {
 
         // Drop the listener and scan again — route should be removed.
         drop(listener);
-        watcher.scan(&mut active_routes).await.unwrap();
+        watcher.scan(&mut active_routes, &mut gen).await.unwrap();
 
         assert!(
             !active_routes.contains_key(&port),
@@ -604,7 +644,8 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let mut active_routes = HashMap::new();
-        watcher.scan(&mut active_routes).await.unwrap();
+        let mut gen = 0u64;
+        watcher.scan(&mut active_routes, &mut gen).await.unwrap();
 
         assert!(
             !active_routes.contains_key(&port),
@@ -629,14 +670,15 @@ mod tests {
 
         // First scan: no projects registered, should skip scanning entirely.
         let mut active_routes = HashMap::new();
-        watcher.scan(&mut active_routes).await.unwrap();
+        let mut gen = 0u64;
+        watcher.scan(&mut active_routes, &mut gen).await.unwrap();
         assert!(active_routes.is_empty(), "no routes yet — no projects registered");
 
         // Now register the project (simulates user adding a project at runtime).
         projects.write().await.register(cwd, "late-project".into());
 
         // Second scan: should now pick up the already-running listener.
-        watcher.scan(&mut active_routes).await.unwrap();
+        watcher.scan(&mut active_routes, &mut gen).await.unwrap();
         assert!(
             active_routes.contains_key(&port),
             "scan should detect listener after project was registered (port {})",
@@ -658,7 +700,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
 
         let mut active_routes = HashMap::new();
-        watcher.scan(&mut active_routes).await.unwrap();
+        let mut gen = 0u64;
+        watcher.scan(&mut active_routes, &mut gen).await.unwrap();
 
         // Should not have scanned at all — no projects registered.
         assert!(active_routes.is_empty());
@@ -691,10 +734,108 @@ mod tests {
         // We can't fully simulate this in a unit test without mocking, but
         // we can verify that a normal scan with a real listener doesn't
         // incorrectly remove unrelated routes.
-        watcher.scan(&mut active_routes).await.unwrap();
+        let mut gen = 0u64;
+        watcher.scan(&mut active_routes, &mut gen).await.unwrap();
 
         // The route for port 9999 may or may not be cleaned up depending on
         // whether other LISTEN sockets exist on the system. This test mainly
         // exercises the code path without panicking.
+    }
+
+    // -- Most-specific project matching --------------------------------------
+
+    #[test]
+    fn test_find_project_prefers_most_specific_dir() {
+        let mut reg = ProjectRegistry::default();
+        reg.register(PathBuf::from("/Users/me/monorepo"), "monorepo".into());
+        reg.register(
+            PathBuf::from("/Users/me/monorepo/apps/admin"),
+            "admin".into(),
+        );
+        reg.register(
+            PathBuf::from("/Users/me/monorepo/apps/client"),
+            "client".into(),
+        );
+
+        // Exact sub-app match should win over parent
+        assert_eq!(
+            reg.find_project_for_dir(std::path::Path::new(
+                "/Users/me/monorepo/apps/admin/src"
+            )),
+            Some("admin")
+        );
+        assert_eq!(
+            reg.find_project_for_dir(std::path::Path::new(
+                "/Users/me/monorepo/apps/client"
+            )),
+            Some("client")
+        );
+
+        // Something NOT under a sub-app should fall back to the parent
+        assert_eq!(
+            reg.find_project_for_dir(std::path::Path::new(
+                "/Users/me/monorepo/packages/shared"
+            )),
+            Some("monorepo")
+        );
+    }
+
+    #[test]
+    fn test_registry_generation_increments() {
+        let mut reg = ProjectRegistry::default();
+        assert_eq!(reg.generation(), 0);
+
+        reg.register(PathBuf::from("/a"), "a".into());
+        assert_eq!(reg.generation(), 1);
+
+        reg.register(PathBuf::from("/b"), "b".into());
+        assert_eq!(reg.generation(), 2);
+
+        reg.unregister(std::path::Path::new("/a"));
+        assert_eq!(reg.generation(), 3);
+
+        // Unregistering something that doesn't exist doesn't bump generation
+        reg.unregister(std::path::Path::new("/nonexistent"));
+        assert_eq!(reg.generation(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_scan_re_evaluates_routes_when_more_specific_project_added() {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let router = Arc::new(RwLock::new(Router::new(notify)));
+        let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
+        let cwd = std::env::current_dir().unwrap();
+
+        // Register the CWD as a parent project.
+        projects
+            .write()
+            .await
+            .register(cwd.clone(), "parent".into());
+
+        let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let mut active_routes = HashMap::new();
+        let mut gen = 0u64;
+        watcher.scan(&mut active_routes, &mut gen).await.unwrap();
+
+        // Should be routed to parent.
+        assert_eq!(active_routes.get(&port).unwrap(), "parent.test");
+
+        // Now register a more specific project that covers our exact CWD.
+        projects.write().await.register(cwd.clone(), "child".into());
+
+        // Next scan should detect the generation change and re-evaluate.
+        watcher.scan(&mut active_routes, &mut gen).await.unwrap();
+
+        assert_eq!(
+            active_routes.get(&port).unwrap(),
+            "child.test",
+            "route should update to the more specific project after registry change"
+        );
+
+        drop(listener);
     }
 }
