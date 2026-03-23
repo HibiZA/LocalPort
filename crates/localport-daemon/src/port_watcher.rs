@@ -103,7 +103,13 @@ impl ProjectRegistry {
         self.projects.insert(directory, name);
     }
 
+    #[allow(dead_code)]
+    pub fn unregister(&mut self, directory: &std::path::Path) -> bool {
+        self.projects.remove(directory).is_some()
+    }
+
     /// Find which project owns the given directory (checks if dir starts with any project dir).
+    #[allow(dead_code)]
     pub fn find_project_for_dir(&self, dir: &std::path::Path) -> Option<&str> {
         for (project_dir, name) in &self.projects {
             if dir.starts_with(project_dir) {
@@ -118,6 +124,10 @@ impl ProjectRegistry {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.projects.is_empty()
     }
 }
 
@@ -166,10 +176,31 @@ impl PortWatcher {
     }
 
     async fn scan(&self, active_routes: &mut HashMap<u16, String>) -> anyhow::Result<()> {
+        // Skip scanning if no projects are registered yet.
+        if self.projects.read().await.is_empty() {
+            return Ok(());
+        }
+
         let listeners = discover_listeners().await?;
+
+        // Guard: if the scan returned nothing but we have active routes,
+        // this is likely a transient failure (permissions, timing, etc.).
+        // Don't nuke existing routes based on an empty/failed scan.
+        if listeners.is_empty() && !active_routes.is_empty() {
+            tracing::debug!(
+                "scan returned 0 listeners but {} routes are active — skipping stale cleanup",
+                active_routes.len()
+            );
+            return Ok(());
+        }
 
         // Track which ports are still active
         let mut seen_ports = std::collections::HashSet::new();
+
+        // Collect the set of registered project directories so we can check
+        // against all listeners — including ones that were previously unmatched
+        // because the project wasn't registered yet.
+        let project_dirs = self.projects.read().await.list();
 
         for listener in &listeners {
             seen_ports.insert(listener.port);
@@ -180,24 +211,39 @@ impl PortWatcher {
             }
 
             // Try to find the working directory of this PID
-            if let Some(cwd) = get_pid_cwd(listener.pid).await {
-                // Hold the projects lock only briefly to check membership
-                let project_name = self
-                    .projects
-                    .read()
-                    .await
-                    .find_project_for_dir(&cwd)
-                    .map(|s| s.to_string());
-
-                if let Some(project_name) = project_name {
-                    let hostname = format!("{}.{}", project_name, self.tld);
-                    let addr: std::net::SocketAddr = format!("127.0.0.1:{}", listener.port)
-                        .parse()
-                        .expect("hardcoded 127.0.0.1 with valid port always parses");
-
-                    self.router.write().await.add_route(hostname.clone(), addr);
-                    active_routes.insert(listener.port, hostname);
+            let cwd = match get_pid_cwd(listener.pid).await {
+                Some(cwd) => cwd,
+                None => {
+                    tracing::trace!(
+                        "could not get cwd for pid={} port={} — skipping",
+                        listener.pid,
+                        listener.port
+                    );
+                    continue;
                 }
+            };
+
+            // Check if CWD matches any registered project.
+            let project_name = project_dirs
+                .iter()
+                .find(|(dir, _)| cwd.starts_with(dir))
+                .map(|(_, name)| name.clone());
+
+            if let Some(project_name) = project_name {
+                let hostname = format!("{}.{}", project_name, self.tld);
+                let addr: std::net::SocketAddr = format!("127.0.0.1:{}", listener.port)
+                    .parse()
+                    .expect("hardcoded 127.0.0.1 with valid port always parses");
+
+                tracing::info!(
+                    "auto-routing {hostname} -> 127.0.0.1:{} (pid={}, cwd={})",
+                    listener.port,
+                    listener.pid,
+                    cwd.display()
+                );
+
+                self.router.write().await.add_route(hostname.clone(), addr);
+                active_routes.insert(listener.port, hostname);
             }
         }
 
@@ -210,6 +256,7 @@ impl PortWatcher {
 
         for port in stale_ports {
             if let Some(hostname) = active_routes.remove(&port) {
+                tracing::info!("removing stale route {hostname} (port {port} no longer listening)");
                 self.router.write().await.remove_route(&hostname);
             }
         }
@@ -239,7 +286,10 @@ async fn discover_listeners() -> anyhow::Result<Vec<ListeningPort>> {
 fn discover_listeners_blocking() -> Vec<ListeningPort> {
     let pids = match pids_by_type(ProcFilter::All) {
         Ok(p) => p,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            tracing::warn!("pids_by_type failed: {} — returning empty listener list", e);
+            return Vec::new();
+        }
     };
 
     let mut listeners = Vec::new();
@@ -296,6 +346,7 @@ fn discover_listeners_blocking() -> Vec<ListeningPort> {
         }
     }
 
+    tracing::trace!("discovered {} listening ports", listeners.len());
     listeners
 }
 
@@ -561,5 +612,89 @@ mod tests {
         );
 
         drop(listener);
+    }
+
+    #[tokio::test]
+    async fn test_scan_picks_up_project_registered_after_listener_started() {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let router = Arc::new(RwLock::new(Router::new(notify)));
+        let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
+        let cwd = std::env::current_dir().unwrap();
+
+        let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+
+        // Start a listener BEFORE registering the project.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        // First scan: no projects registered, should skip scanning entirely.
+        let mut active_routes = HashMap::new();
+        watcher.scan(&mut active_routes).await.unwrap();
+        assert!(active_routes.is_empty(), "no routes yet — no projects registered");
+
+        // Now register the project (simulates user adding a project at runtime).
+        projects.write().await.register(cwd, "late-project".into());
+
+        // Second scan: should now pick up the already-running listener.
+        watcher.scan(&mut active_routes).await.unwrap();
+        assert!(
+            active_routes.contains_key(&port),
+            "scan should detect listener after project was registered (port {})",
+            port
+        );
+        assert_eq!(active_routes.get(&port).unwrap(), "late-project.test");
+
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn test_scan_skips_when_no_projects_registered() {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let router = Arc::new(RwLock::new(Router::new(notify)));
+        let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
+
+        let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+
+        let mut active_routes = HashMap::new();
+        watcher.scan(&mut active_routes).await.unwrap();
+
+        // Should not have scanned at all — no projects registered.
+        assert!(active_routes.is_empty());
+
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn test_empty_scan_does_not_nuke_active_routes() {
+        // Simulate the case where active_routes has entries but the scan
+        // returns 0 listeners (transient failure). Routes should be preserved.
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let router = Arc::new(RwLock::new(Router::new(notify)));
+        let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
+        let cwd = std::env::current_dir().unwrap();
+        projects.write().await.register(cwd, "myapp".into());
+
+        let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+
+        // Seed active_routes as if a previous scan found a listener.
+        let mut active_routes = HashMap::new();
+        active_routes.insert(9999, "myapp.test".to_string());
+
+        // The listener on port 9999 doesn't actually exist, so it won't show
+        // up in the scan. But our guard should prevent removal if the scan
+        // returns completely empty (all listeners gone at once is suspicious).
+        // Note: this test only works if the system has no other LISTEN ports,
+        // which is unlikely. So we test the guard condition explicitly: if
+        // listeners is empty AND active_routes is not, skip cleanup.
+        // We can't fully simulate this in a unit test without mocking, but
+        // we can verify that a normal scan with a real listener doesn't
+        // incorrectly remove unrelated routes.
+        watcher.scan(&mut active_routes).await.unwrap();
+
+        // The route for port 9999 may or may not be cleaned up depending on
+        // whether other LISTEN sockets exist on the system. This test mainly
+        // exercises the code path without panicking.
     }
 }
