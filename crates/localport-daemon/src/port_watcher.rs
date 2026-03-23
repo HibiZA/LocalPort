@@ -339,3 +339,227 @@ fn get_pid_cwd_blocking(pid: u32) -> Option<PathBuf> {
         .ok()
         .map(PathBuf::from)
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    // -- ProjectRegistry tests -----------------------------------------------
+
+    #[test]
+    fn test_registry_register_and_find() {
+        let mut reg = ProjectRegistry::default();
+        reg.register(PathBuf::from("/Users/me/projects/my-app"), "my-app".into());
+
+        assert_eq!(
+            reg.find_project_for_dir(std::path::Path::new("/Users/me/projects/my-app")),
+            Some("my-app")
+        );
+    }
+
+    #[test]
+    fn test_registry_find_subdirectory() {
+        let mut reg = ProjectRegistry::default();
+        reg.register(PathBuf::from("/Users/me/projects/my-app"), "my-app".into());
+
+        // A subdirectory should still match
+        assert_eq!(
+            reg.find_project_for_dir(std::path::Path::new("/Users/me/projects/my-app/src")),
+            Some("my-app")
+        );
+    }
+
+    #[test]
+    fn test_registry_no_match() {
+        let mut reg = ProjectRegistry::default();
+        reg.register(PathBuf::from("/Users/me/projects/my-app"), "my-app".into());
+
+        assert_eq!(
+            reg.find_project_for_dir(std::path::Path::new("/Users/me/projects/other-app")),
+            None
+        );
+    }
+
+    #[test]
+    fn test_registry_list() {
+        let mut reg = ProjectRegistry::default();
+        reg.register(PathBuf::from("/a"), "alpha".into());
+        reg.register(PathBuf::from("/b"), "beta".into());
+
+        let list = reg.list();
+        assert_eq!(list.len(), 2);
+    }
+
+    // -- discover_listeners tests --------------------------------------------
+
+    #[test]
+    fn test_discover_listeners_finds_bound_port() {
+        // Bind a TCP listener so there's at least one LISTEN socket owned by
+        // our PID.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind");
+        let expected_port = listener.local_addr().unwrap().port();
+        let our_pid = std::process::id();
+
+        let listeners = discover_listeners_blocking();
+
+        let found = listeners
+            .iter()
+            .any(|l| l.pid == our_pid && l.port == expected_port);
+
+        assert!(
+            found,
+            "expected to find pid={} port={} in listeners, got: {:?}",
+            our_pid, expected_port, listeners
+        );
+
+        drop(listener);
+    }
+
+    #[test]
+    fn test_discover_listeners_does_not_find_closed_port() {
+        // Bind and immediately close.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind");
+        let closed_port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let our_pid = std::process::id();
+        let listeners = discover_listeners_blocking();
+
+        let found = listeners
+            .iter()
+            .any(|l| l.pid == our_pid && l.port == closed_port);
+
+        assert!(
+            !found,
+            "should NOT find closed port {} in listeners",
+            closed_port
+        );
+    }
+
+    // -- get_pid_cwd tests ---------------------------------------------------
+
+    #[test]
+    fn test_get_pid_cwd_returns_valid_path_for_self() {
+        let cwd = get_pid_cwd_blocking(std::process::id());
+        assert!(cwd.is_some(), "should be able to get CWD of own process");
+
+        let cwd = cwd.unwrap();
+        assert!(cwd.is_absolute(), "CWD should be an absolute path");
+        assert!(cwd.exists(), "CWD path should exist on disk");
+    }
+
+    #[test]
+    fn test_get_pid_cwd_matches_env_cwd() {
+        let cwd = get_pid_cwd_blocking(std::process::id()).unwrap();
+        let env_cwd = std::env::current_dir().unwrap();
+        assert_eq!(cwd, env_cwd, "libproc CWD should match std::env::current_dir()");
+    }
+
+    #[test]
+    fn test_get_pid_cwd_invalid_pid() {
+        // PID 0 is the kernel — we shouldn't be able to get its CWD as a
+        // normal user, and a garbage PID should return None.
+        let cwd = get_pid_cwd_blocking(999_999_999);
+        assert!(cwd.is_none(), "invalid PID should return None");
+    }
+
+    // -- FFI struct layout sanity checks -------------------------------------
+
+    #[test]
+    fn test_proc_vnode_path_info_size() {
+        // Verify our repr(C) structs have the expected sizes so the FFI call
+        // reads/writes the correct amount of memory.
+        //
+        // Expected sizes (from Darwin headers on arm64/x86_64):
+        //   VInfoStat         = 136 bytes
+        //   VnodeInfo          = 152 bytes  (136 + 4 + 4 + 8)
+        //   VnodeInfoPath      = 1176 bytes (152 + 1024)
+        //   ProcVnodePathInfo  = 2352 bytes (1176 * 2)
+        assert_eq!(std::mem::size_of::<VInfoStat>(), 136);
+        assert_eq!(std::mem::size_of::<VnodeInfo>(), 152);
+        assert_eq!(std::mem::size_of::<VnodeInfoPath>(), 1176);
+        assert_eq!(std::mem::size_of::<ProcVnodePathInfo>(), 2352);
+    }
+
+    // -- Integration: scan creates and removes routes ------------------------
+
+    #[tokio::test]
+    async fn test_scan_creates_route_for_listener_in_project_dir() {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let router = Arc::new(RwLock::new(Router::new(notify)));
+        let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
+
+        // Register the current working directory as a project.
+        let cwd = std::env::current_dir().unwrap();
+        projects
+            .write()
+            .await
+            .register(cwd, "test-project".into());
+
+        let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+
+        // Bind a listener in this process (whose CWD is the project dir).
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        // Run one scan cycle.
+        let mut active_routes = HashMap::new();
+        watcher.scan(&mut active_routes).await.unwrap();
+
+        // Verify the route was created.
+        assert!(
+            active_routes.contains_key(&port),
+            "scan should have created a route for port {}",
+            port
+        );
+        assert_eq!(active_routes.get(&port).unwrap(), "test-project.test");
+
+        let routes = router.read().await.list_routes();
+        assert!(
+            routes.iter().any(|(h, _)| h == "test-project.test"),
+            "router should contain the route"
+        );
+
+        // Drop the listener and scan again — route should be removed.
+        drop(listener);
+        watcher.scan(&mut active_routes).await.unwrap();
+
+        assert!(
+            !active_routes.contains_key(&port),
+            "route should be removed after listener is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scan_ignores_listener_outside_project_dir() {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let router = Arc::new(RwLock::new(Router::new(notify)));
+        let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
+
+        // Register a directory that is NOT our CWD.
+        projects
+            .write()
+            .await
+            .register(PathBuf::from("/nonexistent/fake-project"), "fake".into());
+
+        let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into());
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let mut active_routes = HashMap::new();
+        watcher.scan(&mut active_routes).await.unwrap();
+
+        assert!(
+            !active_routes.contains_key(&port),
+            "should NOT create a route for a listener outside any project dir"
+        );
+
+        drop(listener);
+    }
+}
