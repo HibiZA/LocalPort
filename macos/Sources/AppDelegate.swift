@@ -307,7 +307,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             newRoutes[projectName] = upstream
 
-            if !projects.contains(where: { $0.id == projectName }) {
+            // Match existing projects case-insensitively to avoid duplicates
+            // when the daemon normalizes names (e.g. "MyApp" -> "myapp").
+            let alreadyExists = projects.contains(where: {
+                $0.id.lowercased() == projectName.lowercased()
+                    || $0.name.lowercased() == projectName.lowercased()
+            })
+            if !alreadyExists {
                 let colorIndex = projects.count % colorPalette.count
                 let project = Project(
                     id: projectName,
@@ -327,8 +333,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Project Management
 
     func addProject(directory: String) {
+        // Check for duplicate by directory path
         if let existing = projects.first(where: { $0.directory == directory }) {
-            logger.info("Project \(existing.name) already exists")
+            logger.info("Project \(existing.name) already exists (same directory)")
             return
         }
 
@@ -337,7 +344,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Read .localport.toml if it exists
         let projectConfig = Self.readProjectConfig(directory: directory)
-        let projectName = projectConfig?["name"] ?? dirName
+        let rawName = projectConfig?["name"] ?? dirName
+
+        // Normalize: lowercase + replace underscores (matches daemon behavior)
+        let projectName = rawName.lowercased().replacingOccurrences(of: "_", with: "-")
+
+        // Check for duplicate by normalized name
+        if let existing = projects.first(where: { $0.id == projectName }) {
+            logger.info("Project '\(projectName)' already exists (registered as \(existing.directory))")
+            return
+        }
+
         let tld = UserDefaults.standard.string(forKey: PrefKey.tld) ?? "test"
         let hostname = projectConfig?["hostname"] ?? "\(projectName).\(tld)"
 

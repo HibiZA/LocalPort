@@ -185,7 +185,7 @@ impl ConnectionHandler {
 
         // Resolve name: explicit param > .localport.toml > directory basename
         let explicit_name = req.params.get("name").and_then(|v| v.as_str());
-        let (name, hostname_override) = if let Some(n) = explicit_name {
+        let (raw_name, hostname_override) = if let Some(n) = explicit_name {
             (n.to_string(), None)
         } else {
             match config::load_project_config(&directory) {
@@ -200,6 +200,11 @@ impl ConnectionHandler {
             }
         };
 
+        // Normalize: lowercase and replace underscores with hyphens so that
+        // directory names like "grid_businessProductCalc" become valid DNS
+        // labels ("grid-businessproductcalc") automatically.
+        let name = raw_name.to_lowercase().replace('_', "-");
+
         if !validation::is_valid_dns_label(&name) {
             return Response::error(
                 req.id,
@@ -208,6 +213,8 @@ impl ConnectionHandler {
             );
         }
 
+        // Register (or update) the project. If the same directory is already
+        // registered, this overwrites the old entry — no duplicates.
         self.projects
             .write()
             .await
