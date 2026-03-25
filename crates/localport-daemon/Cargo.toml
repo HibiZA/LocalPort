@@ -17,3 +17,4 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 libc = "0.2"
+libproc = "0.14.11"

@@ -171,7 +171,7 @@ Browser → https://myapp.test
 
 ### How Port Detection Works
 
-The daemon runs `lsof` every 2 seconds to discover listening TCP ports. For each new port, it checks the process's working directory. If that directory is inside a registered project, a route is created automatically and Caddy is reloaded.
+The daemon polls every 2 seconds using macOS `libproc` APIs (in-process syscalls, no subprocesses) to discover listening TCP ports. For each new port, it checks the process's working directory. If that directory is inside a registered project, a route is created automatically and Caddy is reloaded.
 
 When a port stops listening, the route is removed.
 

@@ -58,7 +58,13 @@ impl Daemon {
         }
 
         // Start port watcher
-        let port_watcher = PortWatcher::new(router.clone(), projects.clone(), config.tld.clone());
+        let scan_notify = Arc::new(Notify::new());
+        let port_watcher = PortWatcher::new(
+            router.clone(),
+            projects.clone(),
+            config.tld.clone(),
+            scan_notify.clone(),
+        );
         let pw_shutdown = shutdown_rx.clone();
         let pw_handle = tokio::spawn(async move {
             port_watcher.run(pw_shutdown).await;
@@ -72,6 +78,7 @@ impl Daemon {
             projects.clone(),
             config.tld.clone(),
             shutdown_tx.clone(),
+            scan_notify.clone(),
         );
         let ipc_shutdown = shutdown_rx.clone();
         let ipc_handle = tokio::spawn(async move {

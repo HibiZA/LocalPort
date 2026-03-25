@@ -284,9 +284,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             do {
-                let routes = try self.daemonClient.getProxyStatus()
+                let status = try self.daemonClient.getProxyStatus()
                 DispatchQueue.main.async {
-                    self.syncProjectsFromRoutes(routes)
+                    self.syncProjectsFromRoutes(status.routes, daemonProjects: status.projects)
                 }
             } catch {
                 logger.error("Failed to get proxy status: \(error)")
@@ -297,8 +297,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func syncProjectsFromRoutes(_ routes: [[String: Any]]) {
+    private func syncProjectsFromRoutes(_ routes: [[String: Any]], daemonProjects: [[String: Any]]) {
         var newRoutes: [String: String] = [:]
+
+        // Build a lookup from project name -> directory using daemon's project registry.
+        var projectDirectories: [String: String] = [:]
+        for proj in daemonProjects {
+            if let name = proj["name"] as? String,
+               let dir = proj["directory"] as? String {
+                projectDirectories[name.lowercased()] = dir
+            }
+        }
 
         for route in routes {
             guard let hostname = route["hostname"] as? String else { continue }
@@ -307,16 +316,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             newRoutes[projectName] = upstream
 
-            if !projects.contains(where: { $0.id == projectName }) {
+            // Match existing projects case-insensitively to avoid duplicates
+            // when the daemon normalizes names (e.g. "MyApp" -> "myapp").
+            let alreadyExists = projects.contains(where: {
+                $0.id.lowercased() == projectName.lowercased()
+                    || $0.name.lowercased() == projectName.lowercased()
+            })
+            if !alreadyExists {
                 let colorIndex = projects.count % colorPalette.count
+                let directory = projectDirectories[projectName.lowercased()] ?? ""
                 let project = Project(
                     id: projectName,
                     name: projectName,
-                    directory: "",
+                    directory: directory,
                     hostname: hostname,
                     color: NSColorWrapper(hex: colorPalette[colorIndex])
                 )
                 projects.append(project)
+            } else if let idx = projects.firstIndex(where: {
+                $0.id.lowercased() == projectName.lowercased()
+            }), projects[idx].directory.isEmpty,
+                let dir = projectDirectories[projectName.lowercased()], !dir.isEmpty {
+                // Backfill directory for existing projects that were missing it.
+                projects[idx].directory = dir
             }
         }
 
@@ -327,8 +349,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Project Management
 
     func addProject(directory: String) {
+        // Check for duplicate by directory path
         if let existing = projects.first(where: { $0.directory == directory }) {
-            logger.info("Project \(existing.name) already exists")
+            logger.info("Project \(existing.name) already exists (same directory)")
             return
         }
 
@@ -337,7 +360,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Read .localport.toml if it exists
         let projectConfig = Self.readProjectConfig(directory: directory)
-        let projectName = projectConfig?["name"] ?? dirName
+        let rawName = projectConfig?["name"] ?? dirName
+
+        // Normalize: lowercase + replace underscores (matches daemon behavior)
+        let projectName = rawName.lowercased().replacingOccurrences(of: "_", with: "-")
+
+        // Check for duplicate by normalized name
+        if let existing = projects.first(where: { $0.id == projectName }) {
+            logger.info("Project '\(projectName)' already exists (registered as \(existing.directory))")
+            return
+        }
+
         let tld = UserDefaults.standard.string(forKey: PrefKey.tld) ?? "test"
         let hostname = projectConfig?["hostname"] ?? "\(projectName).\(tld)"
 
@@ -391,10 +424,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func removeProject(_ projectID: String) {
+        // Find the project's directory before removing it from the list.
+        let directory = projects.first(where: { $0.id == projectID })?.directory
+
         projects.removeAll { $0.id == projectID }
         saveProjects()
         updateMenuBar()
         logger.info("Removed project \(projectID)")
+
+        // Tell the daemon to unregister the project and remove its routes.
+        if let directory = directory, !directory.isEmpty {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                do {
+                    _ = try self?.daemonClient.removeProject(directory: directory)
+                } catch {
+                    logger.error("Failed to unregister project from daemon: \(error)")
+                }
+            }
+        }
     }
 
     // MARK: - Project Config File

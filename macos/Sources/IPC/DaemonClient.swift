@@ -161,11 +161,17 @@ final class DaemonClient {
         return result as? [String: Any] ?? [:]
     }
 
-    func getProxyStatus() throws -> [[String: Any]] {
+    func removeProject(directory: String) throws -> [String: Any] {
+        let result = try callSync(method: "project.remove", params: ["directory": directory])
+        return result as? [String: Any] ?? [:]
+    }
+
+    func getProxyStatus() throws -> (projects: [[String: Any]], routes: [[String: Any]]) {
         let result = try callSync(method: "project.status")
-        guard let dict = result as? [String: Any],
-              let routes = dict["routes"] as? [[String: Any]] else { return [] }
-        return routes
+        guard let dict = result as? [String: Any] else { return ([], []) }
+        let projects = dict["projects"] as? [[String: Any]] ?? []
+        let routes = dict["routes"] as? [[String: Any]] ?? []
+        return (projects, routes)
     }
 }
 

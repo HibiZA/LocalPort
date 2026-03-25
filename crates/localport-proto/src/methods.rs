@@ -1,6 +1,9 @@
 /// Register a project directory with the daemon
 pub const PROJECT_INIT: &str = "project.init";
 
+/// Unregister a project and remove its routes
+pub const PROJECT_REMOVE: &str = "project.remove";
+
 /// Get status of all projects
 pub const PROJECT_STATUS: &str = "project.status";
 
