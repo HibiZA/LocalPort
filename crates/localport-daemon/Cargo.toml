@@ -7,6 +7,13 @@ edition = "2021"
 name = "localportd"
 path = "src/main.rs"
 
+# Companion CLI: `localport run` tags a dev server with its project so the
+# daemon attributes its port by ground truth. Depends only on localport-core
+# + std (no tokio/libproc linked into this binary).
+[[bin]]
+name = "localport"
+path = "src/bin/localport.rs"
+
 [dependencies]
 localport-core = { path = "../localport-core" }
 localport-proto = { path = "../localport-proto" }

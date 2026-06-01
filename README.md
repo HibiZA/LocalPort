@@ -105,6 +105,36 @@ npm run dev
 
 That's it. LocalPort handles the rest.
 
+### Monorepos and explicit tagging
+
+The zero-config path attributes a server to a project by its working directory. That's a heuristic, and it breaks down when a server is launched from a *parent* directory — common in monorepos:
+
+```bash
+# cwd is the repo root, but this server is the "web" app
+pnpm --filter web dev
+```
+
+Here the working directory is the monorepo root, so the heuristic would attribute the port to the root project (or miss it). Wrap the command in `localport run` to tag it with the right project explicitly:
+
+```bash
+localport run --project web -- pnpm --filter web dev
+# → https://web.test, regardless of the directory it was launched from
+```
+
+`localport run` sets the `LOCALPORT_PROJECT` environment variable and then execs your command. Because the environment is inherited across `fork`/`exec`, every worker the server spawns (Vite, Next, esbuild, …) keeps the tag, so whichever one ends up holding the listening socket is still attributed correctly. **An explicit tag always wins over the working-directory heuristic.**
+
+If you omit `--project`, the name is taken from the nearest `.localport.toml` (its `[project] name`), falling back to the current directory's name:
+
+```bash
+localport run -- npm run dev
+```
+
+The `localport` CLI is bundled inside `LocalPort.app`. To put it on your `PATH`:
+
+```bash
+sudo ln -sf /Applications/LocalPort.app/Contents/Helpers/localport /usr/local/bin/localport
+```
+
 ## Configuration
 
 ### Global Config
@@ -157,13 +187,17 @@ Browser → https://myapp.test
 |-----------|----------|---------|
 | `LocalPort.app` | Swift | macOS menu bar app — manages everything |
 | `localportd` | Rust | Daemon — Caddy management, DNS responder, port watcher, IPC |
+| `localport` | Rust | CLI — `localport run` tags a server with its project for ground-truth attribution |
 | Caddy | Go | Reverse proxy with automatic HTTPS (auto-downloaded) |
 
 ### How Port Detection Works
 
-The daemon polls every 2 seconds using macOS `libproc` APIs (in-process syscalls, no subprocesses) to discover listening TCP ports. For each new port, it checks the process's working directory. If that directory is inside a registered project, a route is created automatically and Caddy is reloaded.
+The daemon polls every 2 seconds using macOS `libproc` APIs (in-process syscalls, no subprocesses) to discover listening TCP ports. For each new port it attributes the listener to a project in one of two ways:
 
-When a port stops listening, the route is removed.
+1. **Explicit tag (ground truth).** If the server was started with [`localport run`](#monorepos-and-explicit-tagging), it carries a `LOCALPORT_PROJECT` environment variable. The daemon reads that variable back from the process and maps the port to that project directly.
+2. **Working-directory heuristic (zero-config default).** Otherwise the daemon reads the process's working directory; if it sits inside a registered project directory, the port is mapped to that project. When project directories nest (monorepos), the most specific match wins.
+
+A tag always overrides the directory heuristic. Once a port is attributed, a route is created and Caddy is reloaded; when the port stops listening, the route is removed.
 
 ## Requirements
 

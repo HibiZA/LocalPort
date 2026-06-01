@@ -135,160 +135,176 @@ fn test_proc_vnode_path_info_size() {
     assert_eq!(std::mem::size_of::<ffi::ProcVnodePathInfo>(), 2352);
 }
 
-// -- Integration: scan creates and removes routes ----------------------------
+// -- reconcile: pure routing decisions (deterministic, no real ports) --------
+//
+// These replace the old `scan`-level integration tests, which bound real
+// `127.0.0.1:0` listeners and enumerated the whole system. That made them flaky
+// under parallel execution and port reuse (e.g. a freed port being re-bound by
+// another test before the "route removed" assertion). `reconcile` is the pure
+// routing core, so the same scenarios are now exercised deterministically.
+// One intentional real-system integration test is kept below
+// (`test_scan_re_evaluates_routes_when_more_specific_project_added`) to prove
+// the discover → reconcile → router wiring against the live OS.
 
-#[tokio::test]
-async fn test_scan_creates_route_for_listener_in_project_dir() {
-    let notify = Arc::new(tokio::sync::Notify::new());
-    let router = Arc::new(RwLock::new(Router::new(notify)));
-    let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
-
-    let cwd = std::env::current_dir().unwrap();
-    projects
-        .write()
-        .await
-        .register(cwd, "test-project".into());
-
-    let scan_notify = Arc::new(tokio::sync::Notify::new());
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
-
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-
-    let mut active_routes = HashMap::new();
-    let mut gen = 0u64;
-    watcher.scan(&mut active_routes, &mut gen).await.unwrap();
-
-    assert!(
-        active_routes.contains_key(&port),
-        "scan should have created a route for port {}",
-        port
-    );
-    assert_eq!(active_routes.get(&port).unwrap(), "test-project.test");
-
-    let routes = router.read().await.list_routes();
-    assert!(
-        routes.iter().any(|(h, _)| h == "test-project.test"),
-        "router should contain the route"
-    );
-
-    // Drop the listener and scan again — route should be removed.
-    drop(listener);
-    watcher.scan(&mut active_routes, &mut gen).await.unwrap();
-
-    assert!(
-        !active_routes.contains_key(&port),
-        "route should be removed after listener is dropped"
-    );
+fn info(port: u16, tag: Option<&str>, cwd: Option<&str>) -> ListenerInfo {
+    ListenerInfo {
+        port,
+        pid: port as u32,
+        tag: tag.map(String::from),
+        cwd: cwd.map(PathBuf::from),
+    }
 }
 
-#[tokio::test]
-async fn test_scan_ignores_listener_outside_project_dir() {
-    let notify = Arc::new(tokio::sync::Notify::new());
-    let router = Arc::new(RwLock::new(Router::new(notify)));
-    let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
+#[test]
+fn test_reconcile_routes_listener_in_project_dir() {
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/api"), "api".into());
 
-    projects
-        .write()
-        .await
-        .register(PathBuf::from("/nonexistent/fake-project"), "fake".into());
+    let listeners = vec![info(3000, None, Some("/Users/me/api/src"))];
+    let plan = reconcile(&listeners, &HashMap::new(), &reg, "test");
 
-    let scan_notify = Arc::new(tokio::sync::Notify::new());
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
-
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-
-    let mut active_routes = HashMap::new();
-    let mut gen = 0u64;
-    watcher.scan(&mut active_routes, &mut gen).await.unwrap();
-
-    assert!(
-        !active_routes.contains_key(&port),
-        "should NOT create a route for a listener outside any project dir"
-    );
-
-    drop(listener);
+    assert_eq!(plan.add.len(), 1);
+    assert_eq!(plan.add[0].port, 3000);
+    assert_eq!(plan.add[0].hostname, "api.test");
+    assert_eq!(plan.add[0].addr, "127.0.0.1:3000".parse().unwrap());
+    assert!(plan.add[0].source.starts_with("cwd="));
+    assert!(plan.remove.is_empty());
 }
 
-#[tokio::test]
-async fn test_scan_picks_up_project_registered_after_listener_started() {
-    let notify = Arc::new(tokio::sync::Notify::new());
-    let router = Arc::new(RwLock::new(Router::new(notify)));
-    let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
-    let cwd = std::env::current_dir().unwrap();
+#[test]
+fn test_reconcile_routes_tagged_listener_without_registration() {
+    // Ground truth: a tag routes even with an empty registry and a cwd that
+    // matches nothing.
+    let reg = ProjectRegistry::default();
+    let listeners = vec![info(5173, Some("web"), Some("/tmp/anywhere"))];
+    let plan = reconcile(&listeners, &HashMap::new(), &reg, "test");
 
-    let scan_notify = Arc::new(tokio::sync::Notify::new());
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
-
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-
-    // First scan: no projects registered, should skip scanning entirely.
-    let mut active_routes = HashMap::new();
-    let mut gen = 0u64;
-    watcher.scan(&mut active_routes, &mut gen).await.unwrap();
-    assert!(
-        active_routes.is_empty(),
-        "no routes yet — no projects registered"
-    );
-
-    // Now register the project (simulates user adding a project at runtime).
-    projects.write().await.register(cwd, "late-project".into());
-
-    // Second scan: should now pick up the already-running listener.
-    watcher.scan(&mut active_routes, &mut gen).await.unwrap();
-    assert!(
-        active_routes.contains_key(&port),
-        "scan should detect listener after project was registered (port {})",
-        port
-    );
-    assert_eq!(active_routes.get(&port).unwrap(), "late-project.test");
-
-    drop(listener);
+    assert_eq!(plan.add.len(), 1);
+    assert_eq!(plan.add[0].hostname, "web.test");
+    assert_eq!(plan.add[0].source, "tag");
 }
 
-#[tokio::test]
-async fn test_scan_skips_when_no_projects_registered() {
-    let notify = Arc::new(tokio::sync::Notify::new());
-    let router = Arc::new(RwLock::new(Router::new(notify)));
-    let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
+#[test]
+fn test_reconcile_tag_overrides_cwd() {
+    // cwd would map to "monorepo", but the explicit tag wins.
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/monorepo"), "monorepo".into());
 
-    let scan_notify = Arc::new(tokio::sync::Notify::new());
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
+    let listeners = vec![info(4000, Some("web"), Some("/Users/me/monorepo"))];
+    let plan = reconcile(&listeners, &HashMap::new(), &reg, "test");
 
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-
-    let mut active_routes = HashMap::new();
-    let mut gen = 0u64;
-    watcher.scan(&mut active_routes, &mut gen).await.unwrap();
-
-    assert!(active_routes.is_empty());
-
-    drop(listener);
+    assert_eq!(plan.add.len(), 1);
+    assert_eq!(plan.add[0].hostname, "web.test");
+    assert_eq!(plan.add[0].source, "tag");
 }
 
-#[tokio::test]
-async fn test_empty_scan_does_not_nuke_active_routes() {
-    let notify = Arc::new(tokio::sync::Notify::new());
-    let router = Arc::new(RwLock::new(Router::new(notify)));
-    let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
-    let cwd = std::env::current_dir().unwrap();
-    projects.write().await.register(cwd, "myapp".into());
+#[test]
+fn test_reconcile_ignores_unmatched_listener() {
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/api"), "api".into());
 
-    let scan_notify = Arc::new(tokio::sync::Notify::new());
-    let watcher = PortWatcher::new(router.clone(), projects.clone(), "test".into(), scan_notify);
+    // No tag, cwd not under any registered dir.
+    let listeners = vec![info(6000, None, Some("/Users/me/elsewhere"))];
+    let plan = reconcile(&listeners, &HashMap::new(), &reg, "test");
 
-    // Seed active_routes as if a previous scan found a listener.
-    let mut active_routes = HashMap::new();
-    active_routes.insert(9999, "myapp.test".to_string());
+    assert!(plan.add.is_empty());
+    assert!(plan.remove.is_empty());
+}
 
-    let mut gen = 0u64;
-    watcher.scan(&mut active_routes, &mut gen).await.unwrap();
+#[test]
+fn test_reconcile_skips_already_routed_port() {
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/api"), "api".into());
 
-    // The route for port 9999 may or may not be cleaned up depending on
-    // whether other LISTEN sockets exist on the system. This test mainly
-    // exercises the code path without panicking.
+    let listeners = vec![info(3000, None, Some("/Users/me/api"))];
+    let mut active = HashMap::new();
+    active.insert(3000u16, "api.test".to_string());
+
+    let plan = reconcile(&listeners, &active, &reg, "test");
+    assert!(
+        plan.add.is_empty(),
+        "an already-routed port should not be re-added"
+    );
+    assert!(plan.remove.is_empty());
+}
+
+#[test]
+fn test_reconcile_removes_stale_route() {
+    // Port 3000 is routed but no longer listening, while another port IS
+    // listening (so this is a real scan, not the transient-empty case).
+    let reg = ProjectRegistry::default();
+    let listeners = vec![info(8080, None, Some("/tmp/x"))];
+    let mut active = HashMap::new();
+    active.insert(3000u16, "api.test".to_string());
+
+    let plan = reconcile(&listeners, &active, &reg, "test");
+    assert_eq!(plan.remove, vec![(3000u16, "api.test".to_string())]);
+    assert!(plan.add.is_empty());
+}
+
+#[test]
+fn test_reconcile_empty_listeners_keeps_active_routes() {
+    // Transient-failure guard: a 0-listener scan must NOT remove live routes
+    // (an empty enumeration is far more likely a permission/timing failure
+    // than every server stopping at once).
+    let reg = ProjectRegistry::default();
+    let mut active = HashMap::new();
+    active.insert(3000u16, "api.test".to_string());
+
+    let plan = reconcile(&[], &active, &reg, "test");
+    assert_eq!(plan, RoutePlan::default(), "empty scan must be a no-op");
+}
+
+#[test]
+fn test_reconcile_no_routes_when_empty_registry_and_no_tags() {
+    let reg = ProjectRegistry::default();
+    let listeners = vec![
+        info(3000, None, Some("/tmp/a")),
+        info(3001, None, None),
+    ];
+    let plan = reconcile(&listeners, &HashMap::new(), &reg, "test");
+    assert!(plan.add.is_empty());
+    assert!(plan.remove.is_empty());
+}
+
+#[test]
+fn test_reconcile_project_registered_after_listener() {
+    // Models "user adds a project while the server is already running": the
+    // same listener yields no route before registration and a route after.
+    let listeners = vec![info(3000, None, Some("/Users/me/late/src"))];
+
+    let empty_reg = ProjectRegistry::default();
+    let before = reconcile(&listeners, &HashMap::new(), &empty_reg, "test");
+    assert!(before.add.is_empty());
+
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/late"), "late".into());
+    let after = reconcile(&listeners, &HashMap::new(), &reg, "test");
+    assert_eq!(after.add.len(), 1);
+    assert_eq!(after.add[0].hostname, "late.test");
+}
+
+#[test]
+fn test_reconcile_prefers_most_specific_after_reeval() {
+    // After a registry change, `scan` drains active_routes; reconcile then
+    // re-matches against the updated registry, where the most specific dir
+    // wins (the monorepo sub-app overrides the parent).
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/monorepo"), "monorepo".into());
+    reg.register(PathBuf::from("/Users/me/monorepo/apps/web"), "web".into());
+
+    let listeners = vec![info(3000, None, Some("/Users/me/monorepo/apps/web"))];
+    let plan = reconcile(&listeners, &HashMap::new(), &reg, "test");
+    assert_eq!(plan.add[0].hostname, "web.test");
+}
+
+#[test]
+fn test_reconcile_uses_configured_tld() {
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/api"), "api".into());
+    let listeners = vec![info(3000, None, Some("/Users/me/api"))];
+    let plan = reconcile(&listeners, &HashMap::new(), &reg, "localhost");
+    assert_eq!(plan.add[0].hostname, "api.localhost");
 }
 
 // -- Most-specific project matching ------------------------------------------
@@ -328,6 +344,96 @@ fn test_find_project_prefers_most_specific_dir() {
     );
 }
 
+// -- Project attribution: tag (ground truth) vs cwd (heuristic) --------------
+
+#[test]
+fn test_attribution_tagged_wins_without_registration() {
+    // A tagged process is attributed to its project DIRECTLY — no registered
+    // directory and no cwd match required.
+    let reg = ProjectRegistry::default();
+    let cwd = PathBuf::from("/Users/me/anywhere");
+
+    assert_eq!(
+        attribute_project(Some("web"), Some(&cwd), &reg),
+        Some("web".to_string())
+    );
+}
+
+#[test]
+fn test_attribution_untagged_falls_back_to_cwd() {
+    // No tag → use the existing cwd heuristic against the registry.
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/projects/api"), "api".into());
+    let cwd = PathBuf::from("/Users/me/projects/api/src");
+
+    assert_eq!(
+        attribute_project(None, Some(&cwd), &reg),
+        Some("api".to_string())
+    );
+}
+
+#[test]
+fn test_attribution_tag_overrides_cwd_when_they_disagree() {
+    // The monorepo case: cwd is the repo root (registered as "monorepo"), but
+    // the server was launched with `localport run --project web`. The tag must
+    // win over the cwd-derived project.
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/monorepo"), "monorepo".into());
+    let cwd = PathBuf::from("/Users/me/monorepo");
+
+    assert_eq!(
+        attribute_project(Some("web"), Some(&cwd), &reg),
+        Some("web".to_string()),
+        "explicit tag must override the cwd-derived project"
+    );
+}
+
+#[test]
+fn test_attribution_tag_is_normalized() {
+    // Tags go through the same normalization as registration: lowercase and
+    // underscores → hyphens, so the hostname matches.
+    let reg = ProjectRegistry::default();
+    let cwd = PathBuf::from("/Users/me/whatever");
+
+    assert_eq!(
+        attribute_project(Some("My_App"), Some(&cwd), &reg),
+        Some("my-app".to_string())
+    );
+}
+
+#[test]
+fn test_attribution_invalid_tag_falls_back_to_cwd() {
+    // A tag that cannot be a valid DNS label (even after normalization) is
+    // ignored, and attribution falls back to the cwd heuristic.
+    let mut reg = ProjectRegistry::default();
+    reg.register(PathBuf::from("/Users/me/projects/api"), "api".into());
+    let cwd = PathBuf::from("/Users/me/projects/api");
+
+    assert_eq!(
+        attribute_project(Some("has space"), Some(&cwd), &reg),
+        Some("api".to_string())
+    );
+}
+
+#[test]
+fn test_attribution_none_when_no_tag_and_no_cwd_match() {
+    let reg = ProjectRegistry::default();
+    let cwd = PathBuf::from("/Users/me/unregistered");
+
+    assert_eq!(attribute_project(None, Some(&cwd), &reg), None);
+    assert_eq!(attribute_project(None, None, &reg), None);
+}
+
+#[test]
+fn test_resolve_tag_rejects_invalid_labels() {
+    assert_eq!(resolve_tag(Some("web")), Some("web".to_string()));
+    assert_eq!(resolve_tag(Some("My_App")), Some("my-app".to_string()));
+    assert_eq!(resolve_tag(None), None);
+    assert_eq!(resolve_tag(Some("")), None);
+    assert_eq!(resolve_tag(Some("has space")), None);
+    assert_eq!(resolve_tag(Some("UPPER")), Some("upper".to_string()));
+}
+
 #[test]
 fn test_registry_generation_increments() {
     let mut reg = ProjectRegistry::default();
@@ -347,6 +453,12 @@ fn test_registry_generation_increments() {
     assert_eq!(reg.generation(), 3);
 }
 
+/// The one intentional **real-system** integration test: it binds an actual
+/// listener and drives the full `scan` path (live `discover_listeners` →
+/// `reconcile` → `Router`) plus the generation-change re-evaluation that lives
+/// in `scan` itself. It is robust under parallel execution because it never
+/// drops a port mid-test and asserts route *values* (parent → child), not the
+/// absence of a route — so it can't be fooled by another test reusing a port.
 #[tokio::test]
 async fn test_scan_re_evaluates_routes_when_more_specific_project_added() {
     let notify = Arc::new(tokio::sync::Notify::new());

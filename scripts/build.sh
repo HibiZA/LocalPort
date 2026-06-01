@@ -35,6 +35,10 @@ cp "$SWIFT_RELEASE/$APP_NAME" "$APP_DIR/Contents/MacOS/"
 # Copy daemon binary
 cp "$RUST_RELEASE/localportd" "$APP_DIR/Contents/Helpers/"
 
+# Copy CLI binary (`localport run` wrapper). Symlink it onto PATH to use it:
+#   sudo ln -sf /Applications/LocalPort.app/Contents/Helpers/localport /usr/local/bin/localport
+cp "$RUST_RELEASE/localport" "$APP_DIR/Contents/Helpers/"
+
 # Copy Info.plist and stamp version from git tag
 cp macos/Resources/Info.plist "$APP_DIR/Contents/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_DIR/Contents/Info.plist"
@@ -52,6 +56,7 @@ echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 # 4. Ad-hoc code sign (removes "damaged" Gatekeeper error)
 echo "  Signing..."
 codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/localportd"
+codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/localport"
 codesign --force --deep --sign - "$APP_DIR"
 
 echo "  Built: $APP_DIR"
