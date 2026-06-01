@@ -209,7 +209,7 @@ impl ConnectionHandler {
         // Normalize: lowercase and replace underscores with hyphens so that
         // directory names like "grid_businessProductCalc" become valid DNS
         // labels ("grid-businessproductcalc") automatically.
-        let name = raw_name.to_lowercase().replace('_', "-");
+        let name = validation::normalize_project_name(&raw_name);
 
         if !validation::is_valid_dns_label(&name) {
             return Response::error(

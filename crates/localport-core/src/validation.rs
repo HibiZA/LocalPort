@@ -23,6 +23,17 @@ pub fn is_valid_tld(s: &str) -> bool {
     is_valid_dns_label(s)
 }
 
+/// Normalize a raw project name into a DNS-friendly form: lowercase, with
+/// underscores replaced by hyphens (so `grid_businessCalc` becomes
+/// `grid-businesscalc`). Does NOT guarantee validity — callers should still
+/// check the result with [`is_valid_dns_label`].
+///
+/// Shared by daemon registration, the port watcher's tag attribution, and the
+/// `localport run` wrapper so all three agree on the hostname a project maps to.
+pub fn normalize_project_name(raw: &str) -> String {
+    raw.to_lowercase().replace('_', "-")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,5 +90,18 @@ mod tests {
         assert!(!is_valid_tld("../evil"));
         assert!(!is_valid_tld("has.dot"));
         assert!(!is_valid_tld("has space"));
+    }
+
+    #[test]
+    fn test_normalize_project_name() {
+        assert_eq!(normalize_project_name("my-app"), "my-app");
+        assert_eq!(normalize_project_name("My_App"), "my-app");
+        assert_eq!(
+            normalize_project_name("grid_businessProductCalc"),
+            "grid-businessproductcalc"
+        );
+        // Output is normalized but not guaranteed valid; callers validate.
+        assert!(is_valid_dns_label(&normalize_project_name("My_App")));
+        assert!(!is_valid_dns_label(&normalize_project_name("has space")));
     }
 }
