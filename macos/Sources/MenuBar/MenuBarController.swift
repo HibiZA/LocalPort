@@ -51,7 +51,7 @@ final class MenuBarController: NSObject {
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = Self.icon(size: 22)
+            button.image = Self.icon(size: 18)
             button.target = self
             button.action = #selector(togglePopover)
         }
