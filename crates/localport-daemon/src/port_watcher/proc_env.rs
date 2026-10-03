@@ -206,37 +206,29 @@ mod imp {
         /// back from ANOTHER long-lived process by its PID — exactly what the
         /// watcher does to a server launched by `localport run`.
         ///
-        /// Three macOS facts this guards against:
+        /// macOS facts this guards against:
         ///   1. `KERN_PROCARGS2` returns the environment captured *at exec
         ///      time*, so the tag must be set before exec (the wrapper does).
         ///   2. The environment of SIP-protected platform binaries (e.g.
-        ///      `/bin/sleep` in place) is withheld; a copy is not a platform
-        ///      binary, mirroring a user-installed dev server (node/pnpm),
-        ///      whose env IS readable.
-        ///   3. On Apple Silicon the kernel SIGKILLs a copied Apple-signed
-        ///      binary (signature/location mismatch), so we re-sign it ad-hoc
-        ///      to keep it alive — otherwise the read would race a dying
-        ///      process and the test would be flaky.
+        ///      `/bin/sleep`) is withheld, so the child must be a non-platform
+        ///      binary, like a user-installed dev server (node/pnpm).
+        ///
+        /// The child is this test binary re-run as [`sleeper_child`]. Copying
+        /// `/bin/sleep` instead doesn't work everywhere: its arm64 slice is
+        /// arm64e, which macOS 14 kills when it isn't Apple-signed.
         #[test]
         fn reads_tag_from_a_separate_process() {
-            let copy = std::env::temp_dir().join(format!("lp_proc_env_{}", std::process::id()));
-            std::fs::copy("/bin/sleep", &copy).expect("copy /bin/sleep");
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&copy).unwrap().permissions();
-            perms.set_mode(0o755);
-            let _ = std::fs::set_permissions(&copy, perms);
-
-            let signed = Command::new("codesign")
-                .args(["-f", "-s", "-"])
-                .arg(&copy)
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            assert!(signed, "ad-hoc codesign of the test binary failed");
-
-            let mut child = Command::new(&copy)
-                .arg("30")
+            let exe = std::env::current_exe().expect("current test binary");
+            let mut child = Command::new(exe)
+                .args([
+                    "--exact",
+                    "port_watcher::proc_env::imp::tests::sleeper_child",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(SLEEPER_ENV, "1")
                 .env("LOCALPORT_PROJECT", "spike-project")
+                .stdout(std::process::Stdio::null())
                 .spawn()
                 .expect("failed to spawn child");
 
@@ -245,10 +237,12 @@ mod imp {
             // The child has been forked but may not have finished exec'ing yet;
             // retry briefly until its post-exec image is readable.
             let mut found = None;
+            let mut exited = None;
             for _ in 0..40 {
                 // Bail out early if the child died — that would mean we never
                 // got a stable post-exec image to read (don't pass on a race).
-                if let Ok(Some(_)) = child.try_wait() {
+                if let Ok(Some(status)) = child.try_wait() {
+                    exited = Some(status);
                     break;
                 }
                 if let Some(v) = get_pid_env_var(pid, "LOCALPORT_PROJECT") {
@@ -260,13 +254,25 @@ mod imp {
 
             let _ = child.kill();
             let _ = child.wait();
-            let _ = std::fs::remove_file(&copy);
 
+            assert_eq!(exited, None, "sleeper child exited early");
             assert_eq!(
                 found,
                 Some("spike-project".to_string()),
                 "should read LOCALPORT_PROJECT from a separate, live process by pid"
             );
+        }
+
+        const SLEEPER_ENV: &str = "LP_PROC_ENV_SLEEPER";
+
+        /// Child process for `reads_tag_from_a_separate_process`. Ignored so
+        /// it only runs when that test launches it; a no-op otherwise.
+        #[test]
+        #[ignore]
+        fn sleeper_child() {
+            if std::env::var_os(SLEEPER_ENV).is_some() {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+            }
         }
     }
 }
