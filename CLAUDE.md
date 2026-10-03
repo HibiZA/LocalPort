@@ -62,8 +62,10 @@ supervises the daemon and handles UI and privileged setup.
   triggers system setup, and handles add/edit/remove and uninstall.
 - `System/DaemonSupervisor` — launches `localportd` (logs to `~/Library/Logs/LocalPort`),
   restarts it on unexpected exit.
-- `System/SystemSetup` — runs `scripts/setup.sh` / `uninstall.sh` and CA trust via one
-  admin prompt. `SystemSetup.currentVersion` forces a re-run when setup changes.
+- `System/SystemSetup` — runs `scripts/setup.sh` / `uninstall.sh` via the admin prompt.
+  CA trust is set in-process (`SecTrustSettings`), since macOS rejects admin trust
+  changes from the prompt's root shell. `SystemSetup.currentVersion` forces a re-run
+  when setup changes.
 - `System/ConfigFile` — reads and writes the daemon's `config.toml`, which is the single
   source of truth for TLD and ports.
 - `IPC/DaemonClient` — synchronous, thread-safe socket client. Never call it on the main thread.

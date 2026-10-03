@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import os.log
 
 private let logger = Logger(subsystem: "com.localport.app", category: "SystemSetup")
@@ -34,15 +35,14 @@ enum SystemSetup {
         run("/usr/bin/security", ["verify-cert", "-c", caPath]) == 0
     }
 
-    /// Run setup.sh as root (one password prompt). Also trusts `caPath` if given.
+    /// Run setup.sh as root (one password prompt).
     @discardableResult
-    static func install(info: DaemonInfo, trustCA caPath: String?) -> Bool {
+    static func install(info: DaemonInfo) -> Bool {
         guard let script = bundledScript("setup.sh") else {
             logger.error("setup.sh not found")
             return false
         }
-        var args = [script, info.tld, "\(info.httpPort)", "\(info.httpsPort)", "\(info.dnsPort)"]
-        if let caPath { args.append(caPath) }
+        let args = [script, info.tld, "\(info.httpPort)", "\(info.httpsPort)", "\(info.dnsPort)"]
         guard runAsAdmin(["/bin/bash"] + args) else {
             logger.error("Setup failed or was cancelled")
             return false
@@ -52,30 +52,63 @@ enum SystemSetup {
         return true
     }
 
-    /// Trust the CA in the System keychain (one password prompt).
+    /// Trust the CA for TLS for all users. This runs in the app, not via the
+    /// admin prompt: macOS only lets a process with UI access change admin
+    /// trust settings, so it asks with its own dialog.
     @discardableResult
     static func trustCA(_ caPath: String) -> Bool {
-        let ok = runAsAdmin([
-            "/usr/bin/security", "add-trusted-cert", "-d", "-r", "trustRoot",
-            "-k", "/Library/Keychains/System.keychain", caPath,
-        ])
-        if ok { logger.info("LocalPort root CA trusted") }
-        return ok
+        guard let cert = loadCertificate(caPath) else {
+            logger.error("Can't read CA certificate at \(caPath)")
+            return false
+        }
+        // Chain building only finds roots that are in a keychain.
+        let added = SecItemAdd([kSecClass: kSecClassCertificate, kSecValueRef: cert] as CFDictionary, nil)
+        guard added == errSecSuccess || added == errSecDuplicateItem else {
+            logger.error("Couldn't add CA to the keychain: \(added)")
+            return false
+        }
+        let status = SecTrustSettingsSetTrustSettings(cert, .admin, nil)
+        guard status == errSecSuccess else {
+            logger.error("Couldn't trust CA: \(status)")
+            return false
+        }
+        logger.info("LocalPort root CA trusted")
+        return true
     }
 
-    /// Remove everything setup.sh installed, plus trust for `caPath`.
+    /// Remove the CA's trust setting and its keychain item (one dialog).
+    static func untrustCA(_ caPath: String) {
+        guard let cert = loadCertificate(caPath) else { return }
+        let status = SecTrustSettingsRemoveTrustSettings(cert, .admin)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            logger.error("Couldn't remove CA trust: \(status)")
+        }
+        SecItemDelete([kSecClass: kSecClassCertificate, kSecValueRef: cert] as CFDictionary)
+    }
+
+    /// Remove everything setup.sh installed, plus the CA and its trust.
     @discardableResult
     static func uninstall(tld: String, dnsPort: Int, caPath: String) -> Bool {
         guard let script = bundledScript("uninstall.sh") else {
             logger.error("uninstall.sh not found")
             return false
         }
+        untrustCA(caPath)
         let ok = runAsAdmin(["/bin/bash", script, tld, "\(dnsPort)", caPath])
         UserDefaults.standard.removeObject(forKey: versionKey)
         return ok
     }
 
     // MARK: - Helpers
+
+    private static func loadCertificate(_ path: String) -> SecCertificate? {
+        guard let pem = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        let base64 = pem.split(whereSeparator: \.isNewline)
+            .filter { !$0.hasPrefix("-----") }
+            .joined()
+        guard let der = Data(base64Encoded: base64) else { return nil }
+        return SecCertificateCreateWithData(nil, der as CFData)
+    }
 
     private static func bundledScript(_ name: String) -> String? {
         [

@@ -1,7 +1,7 @@
 #!/bin/bash
 # LocalPort system setup — run as root (the app runs it via the admin prompt).
 #
-#   setup.sh <tld> <http_port> <https_port> <dns_port> [ca_root.crt]
+#   setup.sh <tld> <http_port> <https_port> <dns_port>
 #
 # Installs:
 #   /etc/resolver/<tld>                         *.<tld> -> LocalPort's DNS responder
@@ -10,14 +10,15 @@
 #   /Library/LaunchDaemons/com.localport.pfctl.plist
 #       re-applies the pf rules at boot and whenever /etc/pf.conf changes
 #       (macOS updates reset it), and enables pf, which is off at boot.
-# and, if a CA path is given, trusts it in the System keychain.
+#
+# The app trusts the local CA itself: macOS only lets a process with UI
+# access change admin trust settings, and this script has none.
 set -euo pipefail
 
 TLD="${1:-test}"
 HTTP_PORT="${2:-47080}"
 HTTPS_PORT="${3:-47443}"
 DNS_PORT="${4:-5553}"
-CA_PATH="${5:-}"
 
 if [[ ! "$TLD" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
     echo "Invalid TLD: $TLD" >&2
@@ -91,9 +92,5 @@ PLIST
 launchctl bootout system/com.localport.pfctl 2>/dev/null || true
 launchctl bootstrap system "$PLIST" 2>/dev/null || true
 /bin/bash "$LOADER"
-
-if [[ -n "$CA_PATH" && -f "$CA_PATH" ]]; then
-    security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CA_PATH"
-fi
 
 echo "LocalPort setup complete"

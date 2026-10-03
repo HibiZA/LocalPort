@@ -250,16 +250,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - System Setup
 
-    /// One admin prompt covers whatever is missing: DNS resolver + pf port
-    /// forwarding (setup.sh) and trusting the local CA.
+    /// Fix whatever is missing: DNS resolver + pf port forwarding (setup.sh,
+    /// one admin prompt) and trusting the local CA (one system dialog).
     private func runSystemSetupIfNeeded(_ info: DaemonInfo) {
         guard !setupInFlight, !setupAttempted, info.tld != "localhost" else { return }
 
         let caExists = FileManager.default.fileExists(atPath: info.caRoot)
         let proxyPending = info.proxy.state == "starting" || info.proxy.state == "downloading"
         if !caExists && proxyPending {
-            // Caddy creates its CA at startup; wait (up to 60s) so a single
-            // prompt can also trust it.
+            // Caddy creates its CA at startup; wait (up to 60s) so the CA
+            // can be trusted in the same pass.
             let since = setupWaitingSince ?? Date()
             setupWaitingSince = since
             if Date().timeIntervalSince(since) < 60 { return }
@@ -271,8 +271,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let needsTrust = caExists && !SystemSetup.isCATrusted(info.caRoot)
 
             if needsSetup {
-                SystemSetup.install(info: info, trustCA: needsTrust ? info.caRoot : nil)
-            } else if needsTrust {
+                SystemSetup.install(info: info)
+            }
+            if needsTrust {
                 SystemSetup.trustCA(info.caRoot)
             }
 

@@ -3,7 +3,7 @@
 #
 #   uninstall.sh [tld] [dns_port] [ca_root.crt]
 #
-# Reverses setup.sh and removes trust for LocalPort's local CA.
+# Reverses setup.sh and removes LocalPort's local CA from the System keychain.
 set -uo pipefail
 
 TLD="${1:-test}"
@@ -31,10 +31,9 @@ if grep -q 'localport' /etc/pf.conf 2>/dev/null; then
     pfctl -f /etc/pf.conf 2>/dev/null || true
 fi
 
-# Local CA: remove its trust setting and the certificate itself. Left behind,
-# a trusted root whose key sits in the user's home is a security liability.
+# Local CA: the app removes its trust setting (that needs UI access). Older
+# versions also put the certificate in the System keychain; delete it.
 if [[ -n "$CA_PATH" && -f "$CA_PATH" ]]; then
-    security remove-trusted-cert -d "$CA_PATH" 2>/dev/null || true
     SHA1=$(openssl x509 -noout -fingerprint -sha1 -in "$CA_PATH" 2>/dev/null | sed 's/.*=//; s/://g')
     if [[ -n "$SHA1" ]]; then
         security delete-certificate -Z "$SHA1" /Library/Keychains/System.keychain 2>/dev/null || true
