@@ -94,12 +94,12 @@ cp -r build/LocalPort.app /Applications/
 
 ### First Launch
 
-On first launch, LocalPort will ask for your password to:
+On first launch, LocalPort asks for your password once to:
 - Set up DNS resolution for `*.test` domains
-- Install Caddy's root CA for trusted local HTTPS
-- Configure port forwarding (80 → 8080, 443 → 8443)
+- Trust LocalPort's local certificate authority for HTTPS
+- Configure port forwarding (80 → 47080, 443 → 47443), re-applied automatically at boot and after macOS updates
 
-Caddy is auto-downloaded if not already installed. This only happens once.
+If Caddy isn't installed, a pinned, checksum-verified release is downloaded automatically. LocalPort checks this configuration on every launch and asks again only if something is missing (for example after you change the TLD).
 
 ## Usage
 
@@ -114,6 +114,16 @@ npm run dev
 ```
 
 That's it. LocalPort handles the rest.
+
+### The menu
+
+Each project's submenu shows which process is serving it (for example `node (pid 4242) · [::1]:5173`) and offers **Open in Browser**, **Copy URL**, **Reveal in Finder** and **Settings...**.
+
+**Unclaimed Ports** lists dev servers LocalPort can see but can't attribute to a project. For each one you can:
+- **Add "folder" as Project** — register the folder the server is running in
+- **Assign to Project** — route that port to an existing project whatever process listens on it. Use this for servers that don't run from the project folder, such as a Docker-published port. You can also set it in Settings with a port and **Claim this port**.
+
+macOS system services, debugger and ephemeral ports, and sockets bound to VPN/LAN addresses are left out of this list.
 
 ### Monorepos and explicit tagging
 
@@ -153,27 +163,39 @@ sudo ln -sf /Applications/LocalPort.app/Contents/Helpers/localport /usr/local/bi
 
 ```toml
 # TLD for project hostnames (default: "test")
-# Set to "localhost" to skip DNS setup (access via myapp.localhost:8080)
+# Set to "localhost" to skip DNS setup (access via http://myapp.localhost:47080)
 tld = "test"
 
 [caddy]
-http_port = 8080
-https_port = 8443
+http_port = 47080    # Caddy's ports; deliberately uncommon so they don't
+https_port = 47443   # collide with your own dev servers
+admin_port = 47019   # Caddy admin API (localhost only)
 
 [daemon]
 log_level = "info"
 dns_port = 5553
 ```
 
+The TLD can also be changed in **Preferences**, which updates this file and restarts the daemon.
+
 ### Per-Project Config (Optional)
 
-You can add a `.localport.toml` to your project root to override the default name and hostname. Without this file, LocalPort uses the directory name.
+You can add a `.localport.toml` to your project root to override the defaults. Without this file, LocalPort uses the directory name. Every field is optional.
 
 ```toml
 [project]
-name = "my-app"
-hostname = "my-app.test"
+name = "my-app"         # project name (default: directory name)
+hostname = "my-app"     # a bare label gets the TLD appended; "api.my-app.test" is used as-is
+port = 5173             # route only this port (see below)
 ```
+
+Hostname and port can also be set per project in the app's **Settings...** panel, and these take precedence over the file.
+
+When a project has several listening ports (dev server, debugger, Storybook, internal workers), LocalPort routes the most likely dev server: the lowest port, skipping Node's inspector (9229) and ephemeral ports. Set `port` to choose explicitly.
+
+### Logs
+
+The daemon and Caddy log to `~/Library/Logs/LocalPort/` (**Open Logs** in the menu). If the proxy fails, the menu shows the error and LocalPort restarts it automatically.
 
 ## Architecture
 
@@ -182,7 +204,7 @@ Browser → https://myapp.test
          ↓
     DNS resolver (/etc/resolver/test → 127.0.0.1:5553)
          ↓
-    pfctl port forwarding (443 → 8443)
+    pfctl port forwarding (443 → 47443)
          ↓
     Caddy reverse proxy (HTTPS with internal CA)
          ↓
@@ -202,17 +224,22 @@ Browser → https://myapp.test
 
 ### How Port Detection Works
 
-The daemon polls every 2 seconds using macOS `libproc` APIs (in-process syscalls, no subprocesses) to discover listening TCP ports. For each new port it attributes the listener to a project in one of two ways:
+The daemon polls every 2 seconds using macOS `libproc` APIs (in-process syscalls, no subprocesses) to discover listening TCP ports. For each port it attributes the listener to a project in one of three ways, in this order:
 
-1. **Explicit tag (ground truth).** If the server was started with [`localport run`](#monorepos-and-explicit-tagging), it carries a `LOCALPORT_PROJECT` environment variable. The daemon reads that variable back from the process and maps the port to that project directly.
-2. **Working-directory heuristic (zero-config default).** Otherwise the daemon reads the process's working directory; if it sits inside a registered project directory, the port is mapped to that project. When project directories nest (monorepos), the most specific match wins.
+1. **Assigned port.** A port assigned to a project (Unclaimed Ports → Assign to Project, or **Claim this port** in Settings) always routes to that project, whichever process listens on it.
+2. **Explicit tag (ground truth).** If the server was started with [`localport run`](#monorepos-and-explicit-tagging), it carries a `LOCALPORT_PROJECT` environment variable. The daemon reads that variable back from the process and maps the port to that project directly.
+3. **Working-directory heuristic (zero-config default).** Otherwise the daemon reads the process's working directory; if it sits inside a registered project directory, the port is mapped to that project. When project directories nest (monorepos), the most specific match wins.
 
-A tag always overrides the directory heuristic. Once a port is attributed, a route is created and Caddy is reloaded; when the port stops listening, the route is removed.
+A tag always overrides the directory heuristic. Each project gets one route. If the project has several listeners, the choice follows the rules in [Per-Project Config](#per-project-config-optional). The route points at the exact address the server listens on, so servers bound only to IPv6 `::1` work too (Node binds `localhost` that way). Once a port is attributed, the route is created and Caddy is reloaded. When the port stops listening, the route is removed.
 
 ## Requirements
 
-- macOS 13 (Ventura) or later
-- For building: Rust toolchain + Swift 5.9+
+- macOS 13 (Ventura) or later, Apple Silicon or Intel
+- For building: Rust toolchain + Swift 5.9+ (`scripts/build.sh --universal` needs Xcode and both Rust targets)
+
+## Uninstall
+
+**Preferences → Uninstall LocalPort...** removes the DNS resolver, port forwarding, the trusted local CA, LocalPort's data and logs, and the app itself.
 
 ## Contributing
 

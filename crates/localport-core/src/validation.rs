@@ -34,6 +34,21 @@ pub fn normalize_project_name(raw: &str) -> String {
     raw.to_lowercase().replace('_', "-")
 }
 
+/// Turn a user-supplied hostname override into a fully-qualified hostname.
+///
+/// A bare label (`"my-app"`) gets `.<tld>` appended; a dotted name
+/// (`"my-app.test"`) is kept as-is. Input is lowercased and a trailing dot is
+/// dropped. Returns `None` if the result is not a valid hostname.
+pub fn qualify_hostname(raw: &str, tld: &str) -> Option<String> {
+    let h = raw.trim().trim_end_matches('.').to_lowercase();
+    let h = if h.contains('.') {
+        h
+    } else {
+        format!("{h}.{tld}")
+    };
+    is_valid_hostname(&h).then_some(h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,5 +118,23 @@ mod tests {
         // Output is normalized but not guaranteed valid; callers validate.
         assert!(is_valid_dns_label(&normalize_project_name("My_App")));
         assert!(!is_valid_dns_label(&normalize_project_name("has space")));
+    }
+
+    #[test]
+    fn test_qualify_hostname() {
+        assert_eq!(
+            qualify_hostname("my-app", "test"),
+            Some("my-app.test".into())
+        );
+        assert_eq!(
+            qualify_hostname("My-App.test.", "test"),
+            Some("my-app.test".into())
+        );
+        assert_eq!(
+            qualify_hostname("api.web.test", "test"),
+            Some("api.web.test".into())
+        );
+        assert_eq!(qualify_hostname("", "test"), None);
+        assert_eq!(qualify_hostname("has space", "test"), None);
     }
 }

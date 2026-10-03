@@ -30,7 +30,7 @@ fn main() {
             std::process::exit(0);
         }
         Some("-V") | Some("--version") => {
-            println!("localport {}", env!("CARGO_PKG_VERSION"));
+            println!("localport {}", localport_core::VERSION);
             std::process::exit(0);
         }
         Some(other) => {
@@ -161,6 +161,6 @@ fn print_help() {
          EXAMPLES:\n    \
          localport run -- npm run dev\n    \
          localport run --project web -- pnpm --filter web dev\n",
-        ver = env!("CARGO_PKG_VERSION"),
+        ver = localport_core::VERSION,
     );
 }

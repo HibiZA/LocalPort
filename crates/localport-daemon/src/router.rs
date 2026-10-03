@@ -18,9 +18,16 @@ impl Router {
     }
 
     pub fn add_route(&mut self, hostname: String, addr: SocketAddr) {
+        if self.routes.get(&hostname) == Some(&addr) {
+            return;
+        }
         tracing::info!("route added: {} -> {}", hostname, addr);
         self.routes.insert(hostname, addr);
         self.change_notify.notify_one();
+    }
+
+    pub fn get(&self, hostname: &str) -> Option<SocketAddr> {
+        self.routes.get(hostname).copied()
     }
 
     pub fn remove_route(&mut self, hostname: &str) -> bool {
@@ -32,8 +39,11 @@ impl Router {
         removed
     }
 
+    /// All routes, sorted by hostname so the generated Caddyfile is stable.
     pub fn list_routes(&self) -> Vec<(String, SocketAddr)> {
-        self.routes.iter().map(|(k, v)| (k.clone(), *v)).collect()
+        let mut routes: Vec<_> = self.routes.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        routes.sort();
+        routes
     }
 }
 

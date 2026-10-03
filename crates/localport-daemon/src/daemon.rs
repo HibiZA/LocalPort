@@ -1,11 +1,12 @@
 use crate::caddy::CaddyManager;
 use crate::dns::DnsResponder;
-use crate::ipc::IpcServer;
-use crate::port_watcher::{PortWatcher, ProjectRegistry};
+use crate::ipc::{IpcContext, IpcServer};
+use crate::port_watcher::{PortWatcher, ProjectRegistry, WatchSnapshot};
 use crate::router::Router;
 use localport_core::config::GlobalConfig;
+use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::signal;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{watch, Notify, RwLock};
 use tokio::time::Duration;
 
@@ -13,32 +14,40 @@ pub struct Daemon;
 
 impl Daemon {
     pub async fn run(config: GlobalConfig) -> anyhow::Result<()> {
+        // Single instance: a live daemon answers on the socket. Starting a
+        // second one would delete its socket and fight it for Caddy's ports.
+        let socket_path = config.socket_path();
+        if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
+            anyhow::bail!(
+                "another localportd is already running (socket {})",
+                socket_path.display()
+            );
+        }
+
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let route_notify = Arc::new(Notify::new());
 
         // Shared state
         let router = Arc::new(RwLock::new(Router::new(route_notify.clone())));
         let projects = Arc::new(RwLock::new(ProjectRegistry::default()));
+        let snapshot = Arc::new(RwLock::new(WatchSnapshot::default()));
+        let caddy = Arc::new(CaddyManager::new(config.clone(), router.clone()));
 
-        // Start Caddy
-        let caddy = Arc::new(tokio::sync::Mutex::new(CaddyManager::new(
-            config.clone(),
-            router.clone(),
-        )));
-        caddy.lock().await.start().await?;
+        // Caddy runs under a supervisor in the background, so IPC comes up
+        // immediately even while Caddy is downloading or failing to start.
+        let caddy_handle = tokio::spawn(caddy.clone().supervise(shutdown_rx.clone()));
 
         // Route change listener: debounce and reload Caddy
         let caddy_for_reload = caddy.clone();
-        let notify_for_reload = route_notify.clone();
         let mut reload_shutdown = shutdown_rx.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = notify_for_reload.notified() => {
+                    _ = route_notify.notified() => {
                         // Debounce: wait for rapid batch changes to settle
                         tokio::time::sleep(Duration::from_millis(200)).await;
-                        if let Err(e) = caddy_for_reload.lock().await.reload().await {
-                            tracing::error!("caddy reload failed: {}", e);
+                        if let Err(e) = caddy_for_reload.reload().await {
+                            tracing::error!("caddy reload failed: {e:#}");
                         }
                     }
                     _ = reload_shutdown.changed() => break,
@@ -57,13 +66,20 @@ impl Daemon {
             });
         }
 
-        // Start port watcher
+        // Start port watcher. Caddy's own ports are never routed.
         let scan_notify = Arc::new(Notify::new());
+        let excluded_ports = HashSet::from([
+            config.caddy.http_port,
+            config.caddy.https_port,
+            config.caddy.admin_port,
+        ]);
         let port_watcher = PortWatcher::new(
             router.clone(),
             projects.clone(),
             config.tld.clone(),
             scan_notify.clone(),
+            excluded_ports,
+            snapshot.clone(),
         );
         let pw_shutdown = shutdown_rx.clone();
         let pw_handle = tokio::spawn(async move {
@@ -71,14 +87,17 @@ impl Daemon {
         });
 
         // Start IPC server
-        let socket_path = config.socket_path();
         let ipc = IpcServer::new(
             socket_path.clone(),
-            router.clone(),
-            projects.clone(),
-            config.tld.clone(),
-            shutdown_tx.clone(),
-            scan_notify.clone(),
+            IpcContext {
+                config: config.clone(),
+                router: router.clone(),
+                projects: projects.clone(),
+                snapshot: snapshot.clone(),
+                caddy: caddy.clone(),
+                shutdown_tx: shutdown_tx.clone(),
+                scan_notify: scan_notify.clone(),
+            },
         );
         let ipc_shutdown = shutdown_rx.clone();
         let ipc_handle = tokio::spawn(async move {
@@ -89,23 +108,21 @@ impl Daemon {
 
         tracing::info!("localportd is running (socket: {})", socket_path.display());
 
-        // Wait for shutdown signal (Ctrl+C or IPC shutdown request)
+        // Wait for SIGINT, SIGTERM (launchd, `kill`, logout) or an IPC
+        // shutdown request — all of them stop Caddy cleanly.
+        let mut sigterm = signal(SignalKind::terminate())?;
+        let mut sigint = signal(SignalKind::interrupt())?;
         let mut shutdown_wait = shutdown_rx.clone();
         tokio::select! {
-            _ = signal::ctrl_c() => {
-                tracing::info!("received Ctrl+C");
-                let _ = shutdown_tx.send(true);
-            }
-            _ = shutdown_wait.changed() => {
-                tracing::info!("shutdown requested via IPC");
-            }
+            _ = sigint.recv() => tracing::info!("received SIGINT"),
+            _ = sigterm.recv() => tracing::info!("received SIGTERM"),
+            _ = shutdown_wait.changed() => tracing::info!("shutdown requested via IPC"),
         }
+        let _ = shutdown_tx.send(true);
 
-        // Stop Caddy
-        caddy.lock().await.stop().await;
-
-        // Wait for subsystems
-        let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        // Wait for subsystems (the Caddy supervisor stops Caddy on shutdown)
+        let _ = tokio::time::timeout(Duration::from_secs(8), async {
+            let _ = caddy_handle.await;
             let _ = pw_handle.await;
             let _ = ipc_handle.await;
         })

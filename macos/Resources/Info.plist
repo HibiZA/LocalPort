@@ -24,7 +24,5 @@
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
-    <key>NSAccessibilityUsageDescription</key>
-    <string>LocalPort needs accessibility access to track and manage your project windows.</string>
 </dict>
 </plist>

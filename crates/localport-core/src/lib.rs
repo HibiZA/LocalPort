@@ -9,3 +9,10 @@ pub mod validation;
 /// working-directory heuristic. Inherited across fork/exec, so child workers
 /// (Vite, Next, …) keep the tag automatically.
 pub const PROJECT_ENV_VAR: &str = "LOCALPORT_PROJECT";
+
+/// Release version: `LOCALPORT_VERSION` at build time (set by
+/// `scripts/build.sh` from the git tag), else the crate version.
+pub const VERSION: &str = match option_env!("LOCALPORT_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
