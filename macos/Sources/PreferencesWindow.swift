@@ -1,6 +1,7 @@
 import AppKit
 import ServiceManagement
 import SwiftUI
+import UserNotifications
 import os.log
 
 private let logger = Logger(subsystem: "com.localport.app", category: "Preferences")
@@ -9,98 +10,399 @@ extension Notification.Name {
     static let localportUninstallRequested = Notification.Name("localportUninstallRequested")
     /// Posted with the new TLD as `object` when the user changes it.
     static let localportTLDChangeRequested = Notification.Name("localportTLDChangeRequested")
+    /// config.toml changed (ports, log level): restart the daemon.
+    static let localportConfigChanged = Notification.Name("localportConfigChanged")
+    static let localportRestartDaemonRequested = Notification.Name("localportRestartDaemonRequested")
+    /// Re-run setup.sh even if the configuration looks current.
+    static let localportSetupRequested = Notification.Name("localportSetupRequested")
+    static let localportOpenLogsRequested = Notification.Name("localportOpenLogsRequested")
 }
 
 // MARK: - SwiftUI Preferences View
 
 private struct PreferencesView: View {
-    @State private var tld: String
-    @State private var launchAtLogin: Bool
-
-    init() {
-        _tld = State(initialValue: ConfigFile.tld())
-        _launchAtLogin = State(initialValue: SMAppService.mainApp.status == .enabled)
-    }
-
     var body: some View {
         TabView {
-            generalTab
+            GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
-
-            aboutTab
+            NetworkSettings()
+                .tabItem { Label("Network", systemImage: "network") }
+            CertificateSettings()
+                .tabItem { Label("Certificate", systemImage: "lock.shield") }
+            AdvancedSettings()
+                .tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
+            AboutView()
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
-        .frame(width: 480, height: 360)
+        .frame(width: 520, height: 560)
     }
+}
 
-    // MARK: General
+private func post(_ name: Notification.Name, _ object: Any? = nil) {
+    NotificationCenter.default.post(name: name, object: object)
+}
 
-    private var generalTab: some View {
+private struct Caption: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+// MARK: General
+
+private struct GeneralSettings: View {
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @AppStorage(AppSettings.Key.browser) private var browser = ""
+    @AppStorage(AppSettings.Key.notifyOnStatusChange) private var notify = false
+    @AppStorage(AppSettings.Key.checkForUpdates) private var checkForUpdates = true
+    @State private var browsers: [AppSettings.Browser] = []
+    @State private var notificationsDenied = false
+
+    private var inApplications: Bool { Bundle.main.bundlePath.hasPrefix("/Applications") }
+
+    var body: some View {
         Form {
-            Section("Networking") {
-                Picker("TLD", selection: $tld) {
-                    Text(".test (HTTPS)").tag("test")
-                    Text(".localhost (HTTP)").tag("localhost")
-                }
-                .onChange(of: tld) { val in
-                    // Writes config.toml and restarts the daemon; switching to
-                    // .test may prompt for the admin password to set up DNS.
-                    NotificationCenter.default.post(name: .localportTLDChangeRequested, object: val)
-                }
-
-                if tld == "localhost" {
-                    Text("Projects accessible at http://myproject.localhost:\(String(ConfigFile.httpPort()))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Projects accessible at https://myproject.\(tld)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
             Section("Startup") {
-                Toggle("Launch at Login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { val in
+                Toggle("Launch at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { enabled in
                         do {
-                            if val {
+                            if enabled {
                                 try SMAppService.mainApp.register()
                             } else {
                                 try SMAppService.mainApp.unregister()
                             }
                         } catch {
                             logger.error("Failed to update login item: \(error)")
-                            launchAtLogin = !val
+                            launchAtLogin = !enabled
                         }
                     }
-                    .disabled(!Bundle.main.bundlePath.hasPrefix("/Applications"))
-
-                if !Bundle.main.bundlePath.hasPrefix("/Applications") {
-                    Text("Move LocalPort to /Applications to enable this")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .disabled(!inApplications)
+                if !inApplications {
+                    Caption("Move LocalPort to /Applications to enable this.")
                 }
             }
 
-            Section {
-                Button("Uninstall LocalPort...", role: .destructive) {
-                    NotificationCenter.default.post(name: .localportUninstallRequested, object: nil)
+            Section("Browser") {
+                Picker("Open projects in", selection: $browser) {
+                    Text("Default browser").tag("")
+                    if !browsers.isEmpty { Divider() }
+                    ForEach(browsers) { app in
+                        Label { Text(app.name) } icon: { Image(nsImage: app.icon) }
+                            .tag(app.id)
+                    }
                 }
-                .foregroundStyle(.red)
+            }
+
+            Section("Notifications") {
+                Toggle("Notify when a project starts or stops", isOn: $notify)
+                    .onChange(of: notify) { enabled in
+                        guard enabled else { return }
+                        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                            DispatchQueue.main.async {
+                                notificationsDenied = !granted
+                                if !granted { notify = false }
+                            }
+                        }
+                    }
+                if notificationsDenied {
+                    Caption("Notifications are turned off for LocalPort in System Settings → Notifications.")
+                }
+            }
+
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: $checkForUpdates)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { browsers = AppSettings.installedBrowsers() }
+    }
+}
+
+// MARK: Network
+
+private struct NetworkSettings: View {
+    @State private var tld = ConfigFile.tld()
+    @AppStorage(AppSettings.Key.showUnclaimedPorts) private var showUnclaimed = true
+    @State private var httpPort = String(ConfigFile.httpPort())
+    @State private var httpsPort = String(ConfigFile.httpsPort())
+    @State private var dnsPort = String(ConfigFile.dnsPort())
+    @State private var portError: String?
+    @State private var applied = false
+
+    private var portsChanged: Bool {
+        httpPort != String(ConfigFile.httpPort())
+            || httpsPort != String(ConfigFile.httpsPort())
+            || dnsPort != String(ConfigFile.dnsPort())
+    }
+
+    var body: some View {
+        Form {
+            Section("Domain") {
+                Picker("Top-level domain", selection: $tld) {
+                    Text(".test (HTTPS)").tag("test")
+                    Text(".localhost (HTTP)").tag("localhost")
+                }
+                .onChange(of: tld) { value in
+                    // Writes config.toml and restarts the daemon; switching to
+                    // .test may prompt for the admin password to set up DNS.
+                    post(.localportTLDChangeRequested, value)
+                }
+                if tld == "localhost" {
+                    Caption("Projects open at http://myproject.localhost:\(httpPort). No DNS or certificate setup needed.")
+                } else {
+                    Caption("Projects open at https://myproject.\(tld).")
+                }
+            }
+
+            Section("Discovery") {
+                Toggle("Show unclaimed ports", isOn: $showUnclaimed)
+                Caption("Lists dev servers LocalPort can see but can't match to a project, so you can add or assign them.")
+            }
+
+            Section {
+                portField("HTTP", text: $httpPort)
+                portField("HTTPS", text: $httpsPort)
+                portField("DNS", text: $dnsPort)
+                HStack {
+                    if let portError {
+                        Label(portError, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if applied {
+                        Label("Saved. The daemon restarted.", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                    Spacer()
+                    Button("Defaults") {
+                        httpPort = "47080"
+                        httpsPort = "47443"
+                        dnsPort = "5553"
+                    }
+                    Button("Apply", action: applyPorts)
+                        .disabled(!portsChanged)
+                        .keyboardShortcut(.defaultAction)
+                }
+            } header: {
+                Text("Ports")
+            } footer: {
+                Caption("Ports Caddy and the DNS responder listen on. Ports 80 and 443 forward to the HTTP and HTTPS ports. Changing them asks for your password once to update the forwarding.")
             }
         }
         .formStyle(.grouped)
     }
 
-    // MARK: About
+    private func portField(_ label: String, text: Binding<String>) -> some View {
+        TextField(label, text: text)
+            .multilineTextAlignment(.trailing)
+            .font(.body.monospacedDigit())
+            .onChange(of: text.wrappedValue) { _ in
+                portError = nil
+                applied = false
+            }
+    }
 
-    private var aboutTab: some View {
+    private func applyPorts() {
+        let values = [httpPort, httpsPort, dnsPort].map { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard let http = values[0], let https = values[1], let dns = values[2] else {
+            portError = "Ports must be numbers."
+            return
+        }
+        guard [http, https, dns].allSatisfy({ (1024...65535).contains($0) }) else {
+            portError = "Use ports from 1024 to 65535."
+            return
+        }
+        guard Set([http, https, dns]).count == 3 else {
+            portError = "Each port must be different."
+            return
+        }
+        do {
+            try ConfigFile.setPorts(http: http, https: https, dns: dns)
+        } catch {
+            portError = error.localizedDescription
+            return
+        }
+        applied = true
+        post(.localportConfigChanged)
+    }
+}
+
+// MARK: Certificate
+
+private struct CertificateSettings: View {
+    @State private var trusted: Bool?
+    @State private var working = false
+    private let caPath = SystemSetup.defaultCARoot
+
+    private var caExists: Bool { FileManager.default.fileExists(atPath: caPath) }
+
+    var body: some View {
+        Form {
+            Section {
+                HStack(spacing: 12) {
+                    Image(systemName: statusSymbol)
+                        .font(.system(size: 28))
+                        .foregroundStyle(statusColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(statusTitle).font(.headline)
+                        Text("LocalPort Local Authority")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if working {
+                        ProgressView().controlSize(.small)
+                    } else if trusted == false && caExists {
+                        Button("Trust Certificate…", action: trust)
+                    }
+                }
+                .padding(.vertical, 4)
+            } footer: {
+                Caption("LocalPort's proxy signs a certificate for each project with this local authority. Your Mac must trust it for browsers to accept https://myproject.test without a warning. The key never leaves this Mac.")
+            }
+
+            Section {
+                Button("Show Certificate in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: caPath)])
+                }
+                .disabled(!caExists)
+                Button("Open Keychain Access") {
+                    if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.keychainaccess") {
+                        NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear(perform: refresh)
+    }
+
+    private var statusTitle: String {
+        guard caExists else { return "Not created yet" }
+        switch trusted {
+        case true?: return "Trusted"
+        case false?: return "Not trusted"
+        case nil: return "Checking…"
+        }
+    }
+
+    private var statusSymbol: String {
+        trusted == true ? "checkmark.shield.fill" : caExists ? "exclamationmark.shield.fill" : "shield"
+    }
+
+    private var statusColor: Color {
+        trusted == true ? .green : caExists && trusted == false ? .orange : .secondary
+    }
+
+    private func refresh() {
+        guard caExists else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = SystemSetup.isCATrusted(caPath)
+            DispatchQueue.main.async { trusted = result }
+        }
+    }
+
+    private func trust() {
+        working = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            SystemSetup.trustCA(caPath)
+            let result = SystemSetup.isCATrusted(caPath)
+            DispatchQueue.main.async {
+                trusted = result
+                working = false
+            }
+        }
+    }
+}
+
+// MARK: Advanced
+
+private struct AdvancedSettings: View {
+    @State private var logLevel = ConfigFile.logLevel()
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Daemon log level", selection: $logLevel) {
+                    Text("Error").tag("error")
+                    Text("Warning").tag("warn")
+                    Text("Info").tag("info")
+                    Text("Debug").tag("debug")
+                    Text("Trace").tag("trace")
+                }
+                .onChange(of: logLevel) { level in
+                    do {
+                        try ConfigFile.setLogLevel(level)
+                        post(.localportConfigChanged)
+                    } catch {
+                        logger.error("Couldn't save log level: \(error)")
+                    }
+                }
+            } header: {
+                Text("Logging")
+            } footer: {
+                Caption("Logs are written to ~/Library/Logs/LocalPort. Use Debug when you report a problem.")
+            }
+
+            Section("Maintenance") {
+                LabeledContent("Daemon") {
+                    Button("Restart") { post(.localportRestartDaemonRequested) }
+                }
+                LabeledContent("DNS and port forwarding") {
+                    Button("Run Setup Again…") { post(.localportSetupRequested) }
+                }
+                LabeledContent("Files") {
+                    HStack {
+                        Button("Open Logs") { post(.localportOpenLogsRequested) }
+                        Button("Open config.toml") { openConfig() }
+                    }
+                }
+            }
+
+            Section {
+                Button("Uninstall LocalPort…", role: .destructive) {
+                    post(.localportUninstallRequested)
+                }
+                .foregroundStyle(.red)
+            } footer: {
+                Caption("Removes the DNS resolver, port forwarding, the trusted certificate, LocalPort's data and logs, and the app. Your projects aren't touched.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func openConfig() {
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: ConfigFile.path) {
+            try? fm.createDirectory(atPath: ConfigFile.directory, withIntermediateDirectories: true)
+            fm.createFile(atPath: ConfigFile.path, contents: Data("# LocalPort daemon settings\n".utf8))
+        }
+        let url = URL(fileURLWithPath: ConfigFile.path)
+        // .toml often has no default app; fall back to TextEdit.
+        if NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
+            NSWorkspace.shared.open(url)
+        } else if let textEdit = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit") {
+            NSWorkspace.shared.open([url], withApplicationAt: textEdit, configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
+}
+
+// MARK: About
+
+private struct AboutView: View {
+    var body: some View {
         VStack(spacing: 12) {
             Spacer()
 
-            Image(nsImage: Self.loadAppIcon())
+            Image(nsImage: MenuBarController.appIcon)
                 .resizable()
-                .frame(width: 96, height: 96)
+                .frame(width: 112, height: 112)
 
             Text("LocalPort")
                 .font(.title.bold())
@@ -120,21 +422,6 @@ private struct PreferencesView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
-    private static func loadAppIcon() -> NSImage {
-        // Try bundle resource first (works in .app bundle)
-        if let path = Bundle.main.path(forResource: "AppIcon", ofType: "icns"),
-           let img = NSImage(contentsOfFile: path) {
-            return img
-        }
-        // Development fallback: look relative to working directory
-        for devPath in ["macos/Resources/AppIcon.icns", "Resources/AppIcon.icns", "../macos/Resources/AppIcon.icns"] {
-            if let img = NSImage(contentsOfFile: devPath) {
-                return img
-            }
-        }
-        return NSApp.applicationIconImage
-    }
 }
 
 // MARK: - AppKit Window Controller (preserves existing API)
@@ -144,12 +431,12 @@ final class PreferencesWindowController: NSWindowController {
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Preferences"
+        window.title = "LocalPort Settings"
         window.center()
         window.isReleasedWhenClosed = false
 

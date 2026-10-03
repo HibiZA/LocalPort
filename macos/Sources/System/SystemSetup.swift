@@ -11,6 +11,12 @@ enum SystemSetup {
     static let currentVersion = 2
     private static let versionKey = "setupVersion"
 
+    /// Where the daemon's Caddy keeps its root CA (the daemon reports the
+    /// same path as `caRoot`).
+    static var defaultCARoot: String {
+        NSHomeDirectory() + "/Library/Application Support/LocalPort/caddy/pki/authorities/local/root.crt"
+    }
+
     static var installedVersion: Int {
         UserDefaults.standard.integer(forKey: versionKey)
     }

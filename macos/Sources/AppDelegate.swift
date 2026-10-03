@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 import os.log
 
 private let logger = Logger(subsystem: "com.localport.app", category: "AppDelegate")
@@ -28,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var setupInFlight = false
     /// Prompt for the admin password at most once per launch / TLD change.
     private var setupAttempted = false
+    /// Re-run setup.sh on the next refresh even if it looks current.
+    private var forceSetup = false
     private var setupWaitingSince: Date?
     private var uninstalling = false
     /// Restart a mismatched daemon at most once per launch.
@@ -45,6 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Hide dock icon — we're a menu bar app
         NSApp.setActivationPolicy(.accessory)
+        AppSettings.registerDefaults()
+        // UNUserNotificationCenter traps outside an app bundle (swift run).
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().delegate = self
+        }
 
         menuBarController.delegate = self
         menuBarController.setup()
@@ -59,6 +67,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] note in
             if let tld = note.object as? String { self?.changeTLD(to: tld) }
         }
+        let center = NotificationCenter.default
+        center.addObserver(forName: .localportConfigChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.restartDaemon(resetSetup: true)
+        }
+        center.addObserver(forName: .localportRestartDaemonRequested, object: nil, queue: .main) { [weak self] _ in
+            self?.restartDaemon(resetSetup: false)
+        }
+        center.addObserver(forName: .localportSetupRequested, object: nil, queue: .main) { [weak self] _ in
+            self?.forceSetup = true
+            self?.setupAttempted = false
+            self?.refreshFromDaemon()
+        }
+        center.addObserver(forName: .localportOpenLogsRequested, object: nil, queue: .main) { [weak self] _ in
+            self?.menuBarDidRequestOpenLogs()
+        }
+        // Settings toggles take effect at once.
+        center.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.applySettings()
+        }
 
         loadProjects()
         updateMenuBar()
@@ -66,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateChecker.onUpdateAvailable = { [weak self] version in
             self?.menuBarController.showUpdateAvailable(version: version)
         }
-        updateChecker.startChecking()
+        if AppSettings.checkForUpdates { updateChecker.startChecking() }
 
         supervisor.start()
 
@@ -177,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func apply(info: DaemonInfo, status: DaemonProjectStatus) {
+        let hadInfo = daemonInfo != nil
         daemonInfo = info
 
         var newUpstreams: [String: String] = [:]
@@ -197,6 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         if changed { saveProjects() }
+        // Only report changes seen while connected, not the first snapshot.
+        if hadInfo { notifyStatusChanges(from: upstreams, to: newUpstreams) }
 
         let projectHostnames = Set(projects.map(\.hostname))
         upstreams = newUpstreams
@@ -266,8 +296,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         setupInFlight = true
+        let force = forceSetup
+        forceSetup = false
         DispatchQueue.global(qos: .userInitiated).async {
-            let needsSetup = SystemSetup.needsSetup(for: info)
+            let needsSetup = force || SystemSetup.needsSetup(for: info)
             let needsTrust = caExists && !SystemSetup.isCATrusted(info.caRoot)
 
             if needsSetup {
@@ -295,9 +327,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         logger.info("TLD changed to .\(tld); restarting daemon")
-        setupAttempted = false
-        setupWaitingSince = nil
+        restartDaemon(resetSetup: true)
+    }
+
+    /// Restart the daemon (e.g. after config.toml changed). `resetSetup`
+    /// re-checks DNS / port forwarding, which a TLD or port change affects.
+    private func restartDaemon(resetSetup: Bool) {
+        if resetSetup {
+            setupAttempted = false
+            setupWaitingSince = nil
+        }
         daemonInfo = nil
+        clearLiveState()
         updateMenuBar()
         supervisor.restart { [weak self] in
             for delay in [0.5, 1.5] {
@@ -438,8 +479,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             upstreams: upstreams,
             otherRoutes: otherRoutes,
             owners: owners,
-            unclaimed: unclaimed
+            unclaimed: AppSettings.showUnclaimedPorts ? unclaimed : []
         ))
+    }
+
+    /// React to a settings change from the Settings window.
+    private func applySettings() {
+        updateMenuBar()
+        if AppSettings.checkForUpdates != updateChecker.isRunning {
+            AppSettings.checkForUpdates ? updateChecker.startChecking() : updateChecker.stop()
+        }
+    }
+
+    /// "storefront is running" / "storefront stopped", if the user wants them.
+    private func notifyStatusChanges(from old: [String: String], to new: [String: String]) {
+        guard AppSettings.notifyOnStatusChange, Bundle.main.bundleIdentifier != nil else { return }
+        let started = Set(new.keys).subtracting(old.keys)
+        let stopped = Set(old.keys).subtracting(new.keys)
+        for project in projects where started.contains(project.id) || stopped.contains(project.id) {
+            let content = UNMutableNotificationContent()
+            if started.contains(project.id) {
+                content.title = "\(project.name) is running"
+                content.body = url(for: project.hostname)?.absoluteString ?? project.hostname
+                content.userInfo = ["hostname": project.hostname]
+            } else {
+                content.title = "\(project.name) stopped"
+                content.body = project.hostname
+            }
+            UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+            )
+        }
     }
 
     /// The browser URL for a hostname: HTTPS via pf (443) for custom TLDs;
@@ -473,13 +543,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: MenuBarControllerDelegate {
     func menuBarDidSelectProject(_ projectID: String) {
         if let project = projects.first(where: { $0.id == projectID }), let url = url(for: project.hostname) {
-            NSWorkspace.shared.open(url)
+            AppSettings.openInBrowser(url)
         }
     }
 
     func menuBarDidSelectRoute(hostname: String) {
         if let url = url(for: hostname) {
-            NSWorkspace.shared.open(url)
+            AppSettings.openInBrowser(url)
         }
     }
 
@@ -496,7 +566,7 @@ extension AppDelegate: MenuBarControllerDelegate {
 
     func menuBarDidRequestOpenUnclaimed(port: Int) {
         if let url = URL(string: "http://localhost:\(port)") {
-            NSWorkspace.shared.open(url)
+            AppSettings.openInBrowser(url)
         }
     }
 
@@ -602,8 +672,7 @@ extension AppDelegate: MenuBarControllerDelegate {
         let home = NSHomeDirectory()
         let tld = daemonInfo?.tld ?? ConfigFile.tld()
         let dnsPort = daemonInfo?.dnsPort ?? 5553
-        let caRoot = daemonInfo?.caRoot
-            ?? home + "/Library/Application Support/LocalPort/caddy/pki/authorities/local/root.crt"
+        let caRoot = daemonInfo?.caRoot ?? SystemSetup.defaultCARoot
 
         uninstalling = true
         daemonPollTimer?.invalidate()
@@ -638,5 +707,30 @@ extension AppDelegate: MenuBarControllerDelegate {
 
     func menuBarDidRequestQuit() {
         NSApp.terminate(nil)
+    }
+}
+
+// MARK: - UNUserNotificationCenterDelegate
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    /// Show banners even though LocalPort is the active app.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
+
+    /// Clicking "… is running" opens the project.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if let hostname = response.notification.request.content.userInfo["hostname"] as? String {
+            DispatchQueue.main.async { self.menuBarDidSelectRoute(hostname: hostname) }
+        }
+        completionHandler()
     }
 }

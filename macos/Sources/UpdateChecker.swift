@@ -28,8 +28,10 @@ final class UpdateChecker {
         return URL(string: "https://github.com/\(owner)/\(repo)/releases/tag/v\(tag)")
     }
 
+    var isRunning: Bool { timer != nil }
+
     func startChecking(interval: TimeInterval = 3600) {
-        guard appVersion != "dev" else { return }
+        guard appVersion != "dev", timer == nil else { return }
         check()
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.check()

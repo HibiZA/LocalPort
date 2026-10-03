@@ -116,6 +116,15 @@ Click the LocalPort icon to open the popover. It has three tabs:
 
 macOS system services, debugger and ephemeral ports, and sockets bound to VPN/LAN addresses are left out of this list.
 
+### Settings
+
+Open **Settings** from the popover (⌘,):
+
+- **General** — launch at login, which browser opens projects, notifications when a project starts or stops, automatic update checks.
+- **Network** — the TLD, whether to list unclaimed ports, and the HTTP / HTTPS / DNS ports LocalPort listens on.
+- **Certificate** — whether your Mac trusts LocalPort's local certificate authority, and a button to trust it again.
+- **Advanced** — the daemon's log level, restart the daemon, run setup again, open the logs or `config.toml`, and uninstall.
+
 ### Monorepos and explicit tagging
 
 The zero-config path attributes a server to a project by its working directory. That's a heuristic, and it breaks down when a server is launched from a *parent* directory — common in monorepos:
