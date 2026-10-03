@@ -1,26 +1,62 @@
 #!/bin/bash
+# Build LocalPort.app (and optionally a DMG).
+#
+#   scripts/build.sh [--universal] [--dmg]
+#
+# --universal  build arm64 + x86_64 binaries (needs both Rust targets and Xcode)
+# --dmg        also create build/LocalPort.dmg
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+UNIVERSAL=0
+DMG=0
+for arg in "$@"; do
+    case "$arg" in
+        --universal) UNIVERSAL=1 ;;
+        --dmg) DMG=1 ;;
+        *) echo "unknown option: $arg" >&2; exit 2 ;;
+    esac
+done
+
 APP_NAME="LocalPort"
 APP_DIR="build/${APP_NAME}.app"
 DMG_PATH="build/${APP_NAME}.dmg"
-RUST_RELEASE="target/release"
-SWIFT_RELEASE="macos/.build/release"
 
 # Derive version from latest git tag (e.g. v0.1.4 -> 0.1.4)
-VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
+TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+VERSION="${TAG#v}"
+VERSION="${VERSION:-0.0.0}"
+# Baked into the Rust binaries (localport-core reads it at compile time).
+export LOCALPORT_VERSION="$VERSION"
 
-echo "=== Building LocalPort ==="
+echo "=== Building LocalPort $VERSION ==="
 
 # 1. Build Rust binaries
 echo "  Building Rust (daemon + CLI)..."
-cargo build --release --quiet
+RUST_OUT="build/rust"
+mkdir -p "$RUST_OUT"
+if [[ $UNIVERSAL == 1 ]]; then
+    cargo build --release --quiet --target aarch64-apple-darwin --target x86_64-apple-darwin
+    for bin in localportd localport; do
+        lipo -create -output "$RUST_OUT/$bin" \
+            "target/aarch64-apple-darwin/release/$bin" \
+            "target/x86_64-apple-darwin/release/$bin"
+    done
+else
+    cargo build --release --quiet
+    cp target/release/localportd target/release/localport "$RUST_OUT/"
+fi
 
 # 2. Build Swift app
 echo "  Building Swift (macOS app)..."
-(cd macos && swift build -c release --quiet 2>&1 | grep -v "warning:" || true)
+if [[ $UNIVERSAL == 1 ]]; then
+    (cd macos && swift build -c release --arch arm64 --arch x86_64)
+    SWIFT_RELEASE="macos/.build/apple/Products/Release"
+else
+    (cd macos && swift build -c release)
+    SWIFT_RELEASE="macos/.build/release"
+fi
 
 # 3. Assemble .app bundle
 echo "  Assembling app bundle..."
@@ -33,11 +69,11 @@ mkdir -p "$APP_DIR/Contents/Resources"
 cp "$SWIFT_RELEASE/$APP_NAME" "$APP_DIR/Contents/MacOS/"
 
 # Copy daemon binary
-cp "$RUST_RELEASE/localportd" "$APP_DIR/Contents/Helpers/"
+cp "$RUST_OUT/localportd" "$APP_DIR/Contents/Helpers/"
 
 # Copy CLI binary (`localport run` wrapper). Symlink it onto PATH to use it:
 #   sudo ln -sf /Applications/LocalPort.app/Contents/Helpers/localport /usr/local/bin/localport
-cp "$RUST_RELEASE/localport" "$APP_DIR/Contents/Helpers/"
+cp "$RUST_OUT/localport" "$APP_DIR/Contents/Helpers/"
 
 # Copy Info.plist and stamp version from git tag
 cp macos/Resources/Info.plist "$APP_DIR/Contents/"
@@ -61,8 +97,8 @@ codesign --force --deep --sign - "$APP_DIR"
 
 echo "  Built: $APP_DIR"
 
-# 4. Create .dmg if requested
-if [[ "${1:-}" == "--dmg" ]]; then
+# 5. Create .dmg if requested
+if [[ $DMG == 1 ]]; then
     echo "  Creating DMG..."
     rm -f "$DMG_PATH"
 

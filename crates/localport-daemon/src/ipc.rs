@@ -1,6 +1,8 @@
-use crate::port_watcher::ProjectRegistry;
+use crate::caddy::CaddyManager;
+use crate::port_watcher::{ProjectEntry, ProjectRegistry, WatchSnapshot};
 use crate::router::Router;
-use localport_core::{config, validation};
+use localport_core::config::{self, GlobalConfig};
+use localport_core::validation;
 use localport_proto::messages::{self, Response};
 use localport_proto::methods;
 use std::net::SocketAddr;
@@ -10,32 +12,28 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::{watch, Notify, RwLock};
 
+/// Shared daemon state the IPC handlers read and mutate.
+#[derive(Clone)]
+pub struct IpcContext {
+    pub config: GlobalConfig,
+    pub router: Arc<RwLock<Router>>,
+    pub projects: Arc<RwLock<ProjectRegistry>>,
+    /// Route owners and unclaimed ports from the watcher's last scan.
+    pub snapshot: Arc<RwLock<WatchSnapshot>>,
+    pub caddy: Arc<CaddyManager>,
+    pub shutdown_tx: watch::Sender<bool>,
+    /// Wakes the port watcher so registry changes apply immediately.
+    pub scan_notify: Arc<Notify>,
+}
+
 pub struct IpcServer {
     socket_path: PathBuf,
-    router: Arc<RwLock<Router>>,
-    projects: Arc<RwLock<ProjectRegistry>>,
-    tld: String,
-    shutdown_tx: watch::Sender<bool>,
-    scan_notify: Arc<Notify>,
+    ctx: IpcContext,
 }
 
 impl IpcServer {
-    pub fn new(
-        socket_path: PathBuf,
-        router: Arc<RwLock<Router>>,
-        projects: Arc<RwLock<ProjectRegistry>>,
-        tld: String,
-        shutdown_tx: watch::Sender<bool>,
-        scan_notify: Arc<Notify>,
-    ) -> Self {
-        Self {
-            socket_path,
-            router,
-            projects,
-            tld,
-            shutdown_tx,
-            scan_notify,
-        }
+    pub fn new(socket_path: PathBuf, ctx: IpcContext) -> Self {
+        Self { socket_path, ctx }
     }
 
     pub async fn run(&self, mut shutdown: watch::Receiver<bool>) -> anyhow::Result<()> {
@@ -49,13 +47,7 @@ impl IpcServer {
             tokio::select! {
                 result = listener.accept() => {
                     let (stream, _) = result?;
-                    let handler = ConnectionHandler {
-                        router: self.router.clone(),
-                        projects: self.projects.clone(),
-                        tld: self.tld.clone(),
-                        shutdown_tx: self.shutdown_tx.clone(),
-                        scan_notify: self.scan_notify.clone(),
-                    };
+                    let handler = ConnectionHandler { ctx: self.ctx.clone() };
                     tokio::spawn(async move {
                         if let Err(e) = handler.handle(stream).await {
                             tracing::debug!("IPC connection error: {}", e);
@@ -75,11 +67,7 @@ impl IpcServer {
 }
 
 struct ConnectionHandler {
-    router: Arc<RwLock<Router>>,
-    projects: Arc<RwLock<ProjectRegistry>>,
-    tld: String,
-    shutdown_tx: watch::Sender<bool>,
-    scan_notify: Arc<Notify>,
+    ctx: IpcContext,
 }
 
 impl ConnectionHandler {
@@ -127,27 +115,43 @@ impl ConnectionHandler {
     }
 
     async fn handle_daemon_status(&self, id: u64) -> Response {
+        let cfg = &self.ctx.config;
         Response::success(
             id,
             serde_json::json!({
-                "version": env!("CARGO_PKG_VERSION"),
+                "version": localport_core::VERSION,
                 "status": "running",
-                "tld": self.tld,
+                "tld": cfg.tld,
+                "http_port": cfg.caddy.http_port,
+                "https_port": cfg.caddy.https_port,
+                "dns_port": cfg.daemon.dns_port,
+                "proxy": self.ctx.caddy.status(),
+                "ca_root": GlobalConfig::ca_root_path().to_string_lossy(),
+                "log_dir": GlobalConfig::log_dir().to_string_lossy(),
             }),
         )
     }
 
     async fn handle_project_status(&self, id: u64) -> Response {
         // Clone data out of locks before serializing
-        let project_data = self.projects.read().await.list();
-        let route_data = self.router.read().await.list_routes();
+        let mut project_data = self.ctx.projects.read().await.list();
+        project_data.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+        let snapshot = self.ctx.snapshot.read().await.clone();
+        let router = self.ctx.router.read().await;
+        let route_data = router.list_routes();
 
         let project_list: Vec<serde_json::Value> = project_data
             .iter()
-            .map(|(dir, name)| {
+            .map(|(dir, entry)| {
+                let upstream = router.get(&entry.hostname);
                 serde_json::json!({
-                    "name": name,
+                    "name": entry.name,
                     "directory": dir.to_string_lossy(),
+                    "hostname": entry.hostname,
+                    "port": entry.port,
+                    "claim": entry.claim,
+                    "upstream": upstream.map(|a| a.to_string()),
+                    "owner": upstream.and(snapshot.owners.get(&entry.hostname)),
                 })
             })
             .collect();
@@ -158,6 +162,7 @@ impl ConnectionHandler {
                 serde_json::json!({
                     "hostname": hostname,
                     "upstream": addr.to_string(),
+                    "owner": snapshot.owners.get(hostname),
                 })
             })
             .collect();
@@ -167,126 +172,130 @@ impl ConnectionHandler {
             serde_json::json!({
                 "projects": project_list,
                 "routes": route_list,
+                "unclaimed": snapshot.unclaimed,
             }),
         )
     }
 
+    /// Register (or re-register) a project directory.
+    ///
+    /// Each setting resolves independently: explicit param > `.localport.toml`
+    /// > default (directory basename / `<name>.<tld>` / no pinned port).
     async fn handle_project_init(&self, req: &messages::Request) -> Response {
-        let directory = req
-            .params
-            .get("directory")
-            .or_else(|| req.params.get("dir"))
-            .and_then(|v| v.as_str());
-
-        let directory = match directory {
-            Some(d) => PathBuf::from(d),
-            None => {
-                return Response::error(
-                    req.id,
-                    messages::INVALID_PARAMS,
-                    "missing 'directory' param".into(),
-                );
-            }
+        let Some(directory) = directory_param(req) else {
+            return invalid_params(req.id, "missing 'directory' param");
         };
 
-        // Resolve name: explicit param > .localport.toml > directory basename
-        let explicit_name = req.params.get("name").and_then(|v| v.as_str());
-        let (raw_name, hostname_override) = if let Some(n) = explicit_name {
-            (n.to_string(), None)
-        } else {
-            match config::load_project_config(&directory) {
-                Ok(cfg) => (cfg.project.name.clone(), cfg.project.hostname.clone()),
-                Err(_) => {
-                    let fallback = directory
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "unnamed".to_string());
-                    (fallback, None)
-                }
-            }
-        };
+        let file = config::load_project_config(&directory)
+            .ok()
+            .map(|c| c.project);
+        let non_empty = |s: &str| (!s.trim().is_empty()).then(|| s.to_string());
+
+        let raw_name = str_param(req, "name")
+            .and_then(non_empty)
+            .or_else(|| file.as_ref().and_then(|f| non_empty(&f.name)))
+            .unwrap_or_else(|| {
+                directory
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unnamed".to_string())
+            });
 
         // Normalize: lowercase and replace underscores with hyphens so that
         // directory names like "grid_businessProductCalc" become valid DNS
         // labels ("grid-businessproductcalc") automatically.
         let name = validation::normalize_project_name(&raw_name);
-
         if !validation::is_valid_dns_label(&name) {
-            return Response::error(
+            return invalid_params(
                 req.id,
-                messages::INVALID_PARAMS,
-                format!("invalid project name '{}': must be a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)", name),
+                &format!("invalid project name '{name}': must be a valid DNS label (lowercase alphanumeric and hyphens, 1-63 chars)"),
             );
         }
 
+        let tld = &self.ctx.config.tld;
+        let hostname = match str_param(req, "hostname")
+            .and_then(non_empty)
+            .or_else(|| file.as_ref().and_then(|f| f.hostname.clone()))
+        {
+            Some(raw) => match validation::qualify_hostname(&raw, tld) {
+                Some(h) => h,
+                None => {
+                    return invalid_params(req.id, &format!("invalid hostname '{raw}'"));
+                }
+            },
+            None => format!("{name}.{tld}"),
+        };
+
+        let port = match req.params.get("port") {
+            None | Some(serde_json::Value::Null) => file.as_ref().and_then(|f| f.port),
+            Some(v) => match v
+                .as_u64()
+                .and_then(|p| u16::try_from(p).ok())
+                .filter(|&p| p > 0)
+            {
+                Some(p) => Some(p),
+                None => return invalid_params(req.id, "invalid 'port' param"),
+            },
+        };
+
+        // Claiming routes the pinned port whoever listens on it, so it is
+        // only accepted together with a port.
+        let claim = req
+            .params
+            .get("claim")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if claim && port.is_none() {
+            return invalid_params(req.id, "'claim' requires a 'port'");
+        }
+
+        let entry = ProjectEntry {
+            name,
+            hostname,
+            port,
+            claim,
+        };
+
         // Register (or update) the project. If the same directory is already
         // registered, this overwrites the old entry — no duplicates.
-        self.projects
+        self.ctx
+            .projects
             .write()
             .await
-            .register(directory.clone(), name.clone());
+            .register(directory.clone(), entry.clone());
 
-        let hostname = hostname_override
-            .unwrap_or_else(|| format!("{}.{}", name, self.tld));
-
-        // Trigger an immediate port scan so already-running processes in this
-        // directory are picked up without waiting for the next 2-second tick.
-        self.scan_notify.notify_one();
+        // Scan now so already-running servers are routed immediately.
+        self.ctx.scan_notify.notify_one();
 
         Response::success(
             req.id,
             serde_json::json!({
-                "name": name,
+                "name": entry.name,
                 "directory": directory.to_string_lossy(),
-                "hostname": hostname,
+                "hostname": entry.hostname,
+                "port": entry.port,
+                "claim": entry.claim,
             }),
         )
     }
 
     async fn handle_project_remove(&self, req: &messages::Request) -> Response {
-        let directory = req
-            .params
-            .get("directory")
-            .or_else(|| req.params.get("dir"))
-            .and_then(|v| v.as_str());
-
-        let directory = match directory {
-            Some(d) => std::path::PathBuf::from(d),
-            None => {
-                return Response::error(
-                    req.id,
-                    messages::INVALID_PARAMS,
-                    "missing 'directory' param".into(),
-                );
-            }
+        let Some(directory) = directory_param(req) else {
+            return invalid_params(req.id, "missing 'directory' param");
         };
 
-        // Look up the project name before removing, so we can clean up its routes.
-        let project_name = self
-            .projects
-            .read()
-            .await
-            .find_project_for_dir(&directory)
-            .map(|s| s.to_string());
-
-        let removed = self.projects.write().await.unregister(&directory);
-
-        if removed {
-            // Remove routes that belonged to this project.
-            if let Some(name) = &project_name {
-                let hostname = format!("{}.{}", name, self.tld);
-                self.router.write().await.remove_route(&hostname);
-                tracing::info!("removed route {} and unregistered project at {}", hostname, directory.display());
-            }
-
-            // Trigger an immediate scan to reconcile state.
-            self.scan_notify.notify_one();
+        let removed = self.ctx.projects.write().await.unregister(&directory);
+        if let Some(entry) = &removed {
+            tracing::info!(
+                "unregistered project '{}' at {}",
+                entry.name,
+                directory.display()
+            );
+            // The watcher removes the project's route on this scan.
+            self.ctx.scan_notify.notify_one();
         }
 
-        Response::success(
-            req.id,
-            serde_json::json!({ "removed": removed }),
-        )
+        Response::success(req.id, serde_json::json!({ "removed": removed.is_some() }))
     }
 
     async fn handle_route_add(&self, req: &messages::Request) -> Response {
@@ -323,7 +332,11 @@ impl ConnectionHandler {
             }
         };
 
-        self.router.write().await.add_route(hostname.clone(), addr);
+        self.ctx
+            .router
+            .write()
+            .await
+            .add_route(hostname.clone(), addr);
         Response::success(req.id, serde_json::json!({"added": hostname}))
     }
 
@@ -339,28 +352,45 @@ impl ConnectionHandler {
             }
         };
 
-        let removed = self.router.write().await.remove_route(&hostname);
+        let removed = self.ctx.router.write().await.remove_route(&hostname);
         Response::success(req.id, serde_json::json!({"removed": removed}))
     }
 
     async fn handle_route_list(&self, id: u64) -> Response {
-        let route_data = self.router.read().await.list_routes();
-        let list: Vec<serde_json::Value> = route_data
-            .iter()
-            .map(|(hostname, addr)| {
-                serde_json::json!({
-                    "hostname": hostname,
-                    "upstream": addr.to_string(),
-                })
-            })
-            .collect();
-
-        Response::success(id, serde_json::json!({"routes": list}))
+        let route_data = self.ctx.router.read().await.list_routes();
+        Response::success(id, serde_json::json!({"routes": routes_json(&route_data)}))
     }
 
     async fn handle_daemon_shutdown(&self, id: u64) -> Response {
         tracing::info!("shutdown requested via IPC");
-        let _ = self.shutdown_tx.send(true);
+        let _ = self.ctx.shutdown_tx.send(true);
         Response::success(id, serde_json::json!({"status": "shutting_down"}))
     }
+}
+
+fn routes_json(routes: &[(String, SocketAddr)]) -> Vec<serde_json::Value> {
+    routes
+        .iter()
+        .map(|(hostname, addr)| {
+            serde_json::json!({
+                "hostname": hostname,
+                "upstream": addr.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn str_param<'a>(req: &'a messages::Request, key: &str) -> Option<&'a str> {
+    req.params.get(key).and_then(|v| v.as_str())
+}
+
+/// The `directory` param (`dir` is accepted as an alias).
+fn directory_param(req: &messages::Request) -> Option<PathBuf> {
+    str_param(req, "directory")
+        .or_else(|| str_param(req, "dir"))
+        .map(PathBuf::from)
+}
+
+fn invalid_params(id: u64, message: &str) -> Response {
+    Response::error(id, messages::INVALID_PARAMS, message.to_string())
 }

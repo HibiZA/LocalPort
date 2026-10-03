@@ -4,7 +4,12 @@ import SwiftUI
 struct ProjectSettings {
     var name: String
     var color: String
-    var hostname: String
+    /// Full hostname override, or nil to use the default / `.localport.toml`.
+    var customHostname: String?
+    /// Pinned port, or nil to let LocalPort pick.
+    var port: Int?
+    /// Route `port` even when the server isn't running in the project folder.
+    var claimPort: Bool
 }
 
 // MARK: - SwiftUI View
@@ -14,8 +19,17 @@ private struct ProjectSettingsView: View {
     let projectTLD: String
     let directory: String
 
+    /// The hostname label the project would get without an override.
+    let defaultLabel: String
+    /// The hostname label currently in effect (shown initially).
+    let currentLabel: String
+    /// The project's existing override, kept as-is if the field isn't edited.
+    let existingCustomHostname: String?
+
     @State var name: String
     @State var hostname: String
+    @State var port: String
+    @State var claimPort: Bool
     @State var selectedColor: String
 
     var onSave: ((ProjectSettings) -> Void)?
@@ -43,12 +57,26 @@ private struct ProjectSettingsView: View {
                         Text("Hostname")
                         Spacer()
                         HStack(spacing: 0) {
-                            TextField("hostname", text: $hostname)
+                            TextField(defaultLabel, text: $hostname)
                                 .multilineTextAlignment(.trailing)
                                 .textFieldStyle(.plain)
                             Text(".\(projectTLD)")
                                 .foregroundStyle(.secondary)
                         }
+                    }
+
+                    HStack {
+                        Text("Port")
+                        Spacer()
+                        TextField("Auto", text: $port)
+                            .multilineTextAlignment(.trailing)
+                            .textFieldStyle(.plain)
+                    }
+                    .help("Route this port when the project listens on several. Leave empty to pick automatically.")
+
+                    if !port.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Toggle("Claim this port", isOn: $claimPort)
+                            .help("Route this port to the project even when the server runs outside the project folder, e.g. a Docker container.")
                     }
 
                     if !directory.isEmpty {
@@ -105,13 +133,12 @@ private struct ProjectSettingsView: View {
                 .keyboardShortcut(.cancelAction)
 
                 Button("Save") {
-                    let fullHostname = hostname.isEmpty
-                        ? name + "." + projectTLD
-                        : hostname + "." + projectTLD
                     onSave?(ProjectSettings(
-                        name: name,
+                        name: name.isEmpty ? defaultLabel : name,
                         color: selectedColor,
-                        hostname: fullHostname
+                        customHostname: resolvedCustomHostname(),
+                        port: Int(port.trimmingCharacters(in: .whitespaces)).flatMap { (1...65535).contains($0) ? $0 : nil },
+                        claimPort: claimPort
                     ))
                 }
                 .keyboardShortcut(.defaultAction)
@@ -119,7 +146,17 @@ private struct ProjectSettingsView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 16)
         }
-        .frame(width: 420, height: 340)
+        .frame(width: 420, height: 410)
+    }
+
+    /// Only an *edited* hostname becomes an override, so a hostname that came
+    /// from `.localport.toml` keeps following that file.
+    private func resolvedCustomHostname() -> String? {
+        let label = hostname.trimmingCharacters(in: .whitespaces).lowercased()
+        if label.isEmpty || label == defaultLabel { return nil }
+        if label == currentLabel { return existingCustomHostname }
+        let suffix = "." + projectTLD
+        return label.hasSuffix(suffix) ? label : label + suffix
     }
 }
 
@@ -129,9 +166,9 @@ final class ProjectSettingsPanel: NSPanel {
     var onSave: ((ProjectSettings) -> Void)?
     var onRemove: ((String) -> Void)?
 
-    init(project: Project) {
+    init(project: Project, tld: String) {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 340),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 410),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -141,16 +178,22 @@ final class ProjectSettingsPanel: NSPanel {
         level = .floating
         center()
 
-        let lastComponent = project.hostname.components(separatedBy: ".").last ?? "test"
-        let tld = lastComponent.isEmpty ? "test" : lastComponent
-        let editable = project.hostname.components(separatedBy: ".").first ?? project.hostname
+        let suffix = "." + tld
+        let editable = project.hostname.hasSuffix(suffix)
+            ? String(project.hostname.dropLast(suffix.count))
+            : project.hostname
 
         let settingsView = ProjectSettingsView(
             projectID: project.id,
             projectTLD: tld,
             directory: project.directory,
+            defaultLabel: project.slug,
+            currentLabel: editable,
+            existingCustomHostname: project.customHostname,
             name: project.name,
             hostname: editable,
+            port: project.port.map(String.init) ?? "",
+            claimPort: project.claimPort,
             selectedColor: project.color.hex,
             onSave: { [weak self] settings in
                 self?.onSave?(settings)

@@ -21,15 +21,18 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        run: bash scripts/build.sh --dmg
-
       - name: Run tests
         run: cargo test
+
+      # Universal (Apple Silicon + Intel) binaries
+      - name: Build
+        run: bash scripts/build.sh --universal --dmg
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v4
