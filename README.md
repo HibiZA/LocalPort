@@ -60,7 +60,7 @@ https://dashboard.test → localhost:5173
 
 The menu bar app shows which projects are running and on which ports:
 
-<p align="center"><img src="docs/popover.png" width="360" alt="LocalPort popover"></p>
+<p align="center"><img src="docs/popover.png" width="380" alt="LocalPort popover"></p>
 
 ## Install
 

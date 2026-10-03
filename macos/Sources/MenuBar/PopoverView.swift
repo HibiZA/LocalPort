@@ -29,7 +29,7 @@ private enum Tab: CaseIterable {
     var symbol: String {
         switch self {
         case .projects: return "globe"
-        case .ports: return "antenna.radiowaves.left.and.right"
+        case .ports: return "dot.radiowaves.left.and.right"
         case .system: return "server.rack"
         }
     }
@@ -41,30 +41,48 @@ private enum Tab: CaseIterable {
         case .system: return "System"
         }
     }
+
+    var shortcut: KeyEquivalent {
+        switch self {
+        case .projects: return "1"
+        case .ports: return "2"
+        case .system: return "3"
+        }
+    }
 }
 
 struct PopoverView: View {
     @ObservedObject var model: PopoverModel
     @State private var tab: Tab = .projects
 
+    /// Every tab gets the same height, so the popover doesn't jump when
+    /// switching; longer content scrolls.
+    private static let contentHeight: CGFloat = 316
+
     private var state: MenuState { model.state }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(spacing: 14) {
             header
             tabBar
-            Group {
-                switch tab {
-                case .projects: projectsTab
-                case .ports: portsTab
-                case .system: systemTab
+            ScrollView(showsIndicators: false) {
+                Group {
+                    switch tab {
+                    case .projects: projectsTab
+                    case .ports: portsTab
+                    case .system: systemTab
+                    }
                 }
+                // Room for the panels' shadows inside the scroll view.
+                .padding(.horizontal, 4)
+                .padding(.bottom, 8)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: Self.contentHeight)
+            .padding(.horizontal, -4)
             footer
         }
         .padding(16)
-        .frame(width: 360)
+        .frame(width: 380)
         .foregroundStyle(Steel.textPrimary)
         .background(Steel.background)
         .environment(\.colorScheme, .dark)
@@ -73,34 +91,38 @@ struct PopoverView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(spacing: 8) {
+        HStack(spacing: 10) {
             Image(nsImage: MenuBarController.appIcon)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 56, height: 56)
-                .shadow(color: Steel.ice.opacity(0.18), radius: 14)
-                .shadow(color: .black.opacity(0.6), radius: 6, y: 3)
-            HStack(spacing: 6) {
-                Circle().fill(health.color).frame(width: 7, height: 7)
-                    .shadow(color: health.color.opacity(0.8), radius: 3)
-                Text(health.label)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(Steel.textSecondary)
+                .frame(width: 32, height: 32)
+                .shadow(color: Steel.ice.opacity(0.18), radius: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("LocalPort")
+                    .font(.system(size: 14, weight: .semibold))
+                HStack(spacing: 5) {
+                    Circle().fill(health.color).frame(width: 6, height: 6)
+                        .shadow(color: health.color.opacity(0.8), radius: 2.5)
+                    Text(health.label)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Steel.textSecondary)
+                }
             }
+            Spacer()
             if let version = model.availableUpdate {
                 Button(action: model.openUpdate) {
-                    Label("Update available: v\(version)", systemImage: "arrow.down.circle.fill")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .padding(.horizontal, 10)
+                    Label("v\(version)", systemImage: "arrow.down.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 9)
                         .padding(.vertical, 4)
                         .background(Capsule().fill(Steel.ice.opacity(0.12)))
                         .overlay(Capsule().strokeBorder(Steel.ice.opacity(0.45)))
                         .foregroundStyle(Steel.ice)
                 }
                 .buttonStyle(.plain)
+                .help("Update available: LocalPort \(version)")
             }
         }
-        .frame(maxWidth: .infinity)
     }
 
     private var health: (label: String, color: Color) {
@@ -118,74 +140,77 @@ struct PopoverView: View {
     private var tabBar: some View {
         HStack(spacing: 4) {
             ForEach(Tab.allCases, id: \.self) { item in
+                let selected = tab == item
                 Button {
                     tab = item
                 } label: {
-                    Image(systemName: item.symbol)
-                        .font(.system(size: 16, weight: .medium))
-                        .frame(maxWidth: .infinity, minHeight: 36)
-                        .foregroundStyle(tab == item ? Steel.ice : Steel.textSecondary)
-                        .shadow(color: tab == item ? Steel.ice.opacity(0.7) : .clear, radius: 4)
-                        .background {
-                            if tab == item {
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(Steel.iceDeep.opacity(0.22))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .strokeBorder(Steel.ice.opacity(0.5), lineWidth: 1)
-                                    )
-                            }
+                    HStack(spacing: 6) {
+                        Image(systemName: item.symbol)
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(item.title)
+                            .font(.system(size: 12.5, weight: .medium))
+                        if item == .ports && !state.unclaimed.isEmpty {
+                            Text("\(state.unclaimed.count)")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 5)
+                                .frame(minWidth: 16, minHeight: 16)
+                                .background(Capsule().fill(Steel.amber))
                         }
-                        .overlay(alignment: .topTrailing) {
-                            if item == .ports && !state.unclaimed.isEmpty {
-                                Text("\(state.unclaimed.count)")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(.black)
-                                    .padding(.horizontal, 4)
-                                    .frame(minWidth: 15, minHeight: 15)
-                                    .background(Capsule().fill(Steel.amber))
-                                    .offset(x: -18, y: 3)
-                            }
+                    }
+                    .foregroundStyle(selected ? Steel.ice : Steel.textSecondary)
+                    .shadow(color: selected ? Steel.ice.opacity(0.6) : .clear, radius: 3)
+                    .frame(maxWidth: .infinity, minHeight: 30)
+                    .background {
+                        if selected {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Steel.iceDeep.opacity(0.22))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(Steel.ice.opacity(0.5), lineWidth: 1)
+                                )
                         }
-                        .contentShape(Rectangle())
+                    }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(item.title)
+                .keyboardShortcut(item.shortcut)
             }
         }
-        .padding(6)
-        .background(SteelPanel())
+        .padding(4)
+        .background(SteelPanel(cornerRadius: 12))
     }
 
     // MARK: - Projects
 
+    /// Running projects first, each group in the user's order.
+    private var sortedProjects: [Project] {
+        let running = state.projects.filter { state.upstreams[$0.id] != nil }
+        return running + state.projects.filter { state.upstreams[$0.id] == nil }
+    }
+
     private var projectsTab: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader("Projects", detail: state.projects.isEmpty ? nil : "\(state.upstreams.count) of \(state.projects.count) running")
-            Card {
-                if state.projects.isEmpty {
-                    EmptyState(
-                        symbol: "shippingbox",
-                        title: "No projects yet",
-                        message: "Add a project folder and its dev server gets a hostname like myapp.\(state.tld ?? "test")."
+        Card {
+            if state.projects.isEmpty {
+                EmptyState(
+                    symbol: "shippingbox",
+                    title: "No projects yet",
+                    message: "Add a project folder and its dev server gets a hostname like myapp.\(state.tld ?? "test")."
+                )
+            } else {
+                ForEach(Array(sortedProjects.enumerated()), id: \.element.id) { index, project in
+                    if index > 0 { RowDivider() }
+                    ProjectRow(
+                        project: project,
+                        upstream: state.upstreams[project.id],
+                        owner: state.owners[project.hostname],
+                        model: model
                     )
-                } else {
-                    Scrolling(count: state.projects.count) {
-                        ForEach(Array(state.projects.enumerated()), id: \.element.id) { index, project in
-                            if index > 0 { RowDivider() }
-                            ProjectRow(
-                                project: project,
-                                upstream: state.upstreams[project.id],
-                                owner: state.owners[project.hostname],
-                                model: model
-                            )
-                        }
-                    }
                 }
-                RowDivider()
-                CardButton(symbol: "plus", title: "Add Project…", action: model.addProject)
-                    .keyboardShortcut("n")
             }
+            RowDivider()
+            CardButton(symbol: "plus", title: "Add Project…", action: model.addProject)
+                .keyboardShortcut("n")
         }
     }
 
@@ -193,7 +218,7 @@ struct PopoverView: View {
 
     private var portsTab: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader("Unclaimed Ports")
+            SectionHeader("Unclaimed")
             Card {
                 if state.unclaimed.isEmpty {
                     EmptyState(
@@ -202,17 +227,15 @@ struct PopoverView: View {
                         message: "Every dev server LocalPort can see belongs to a project."
                     )
                 } else {
-                    Scrolling(count: state.unclaimed.count) {
-                        ForEach(Array(state.unclaimed.enumerated()), id: \.element.port) { index, port in
-                            if index > 0 { RowDivider() }
-                            UnclaimedRow(port: port, projects: state.projects, model: model)
-                        }
+                    ForEach(Array(state.unclaimed.enumerated()), id: \.element.port) { index, port in
+                        if index > 0 { RowDivider() }
+                        UnclaimedRow(port: port, projects: state.projects, model: model)
                     }
                 }
             }
 
             if !state.otherRoutes.isEmpty {
-                SectionHeader("Other Routes").padding(.top, 8)
+                SectionHeader("Other routes").padding(.top, 8)
                 Card {
                     ForEach(Array(state.otherRoutes.enumerated()), id: \.element.hostname) { index, route in
                         if index > 0 { RowDivider() }
@@ -231,24 +254,22 @@ struct PopoverView: View {
     // MARK: - System
 
     private var systemTab: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader("Status")
+        VStack(spacing: 12) {
             Card {
                 StatusRow(symbol: "bolt.horizontal.circle", title: "Daemon") {
-                    HStack(spacing: 8) {
-                        StatusPill(
+                    HStack(spacing: 10) {
+                        StatusText(
                             text: state.daemonConnected ? "Running" : "Stopped",
                             color: state.daemonConnected ? Steel.ice : Steel.danger
                         )
-                        Button(state.daemonConnected ? "Stop" : "Start") {
+                        SteelButton(title: state.daemonConnected ? "Stop" : "Start") {
                             state.daemonConnected ? model.stopDaemon() : model.startDaemon()
                         }
-                        .controlSize(.small)
                     }
                 }
                 RowDivider()
-                StatusRow(symbol: "lock.shield", title: "Proxy") {
-                    StatusPill(text: proxyLabel, color: health.color)
+                StatusRow(symbol: "lock.shield", title: "HTTPS proxy") {
+                    StatusText(text: proxyLabel, color: health.color)
                 }
                 if state.proxyState == "failed", let error = state.proxyError {
                     Text(error)
@@ -257,7 +278,7 @@ struct PopoverView: View {
                         .lineLimit(3)
                         .textSelection(.enabled)
                         .padding(.leading, 34)
-                        .padding(.bottom, 6)
+                        .padding(.bottom, 8)
                 }
                 RowDivider()
                 StatusRow(symbol: "network", title: "Domain") {
@@ -266,12 +287,13 @@ struct PopoverView: View {
                         .foregroundStyle(Steel.textSecondary)
                 }
                 RowDivider()
-                StatusRow(symbol: "point.3.connected.trianglepath.dotted", title: "Routes") {
-                    Text("\(state.upstreams.count + state.otherRoutes.count) active")
-                        .font(.system(size: 12.5))
+                StatusRow(symbol: "point.3.connected.trianglepath.dotted", title: "Active routes") {
+                    Text("\(state.upstreams.count + state.otherRoutes.count)")
+                        .font(.system(size: 12.5, design: .monospaced))
                         .foregroundStyle(Steel.textSecondary)
                 }
-                RowDivider()
+            }
+            Card {
                 CardButton(symbol: "doc.text.magnifyingglass", title: "Open Logs", action: model.openLogs)
             }
         }
@@ -291,7 +313,7 @@ struct PopoverView: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             FooterButton(symbol: "gearshape", title: "Settings", action: model.preferences)
                 .keyboardShortcut(",")
             FooterButton(symbol: "power", title: "Quit", action: model.quit)
@@ -311,36 +333,46 @@ private struct ProjectRow: View {
     @State private var hovering = false
     @State private var copied = false
 
+    private var running: Bool { upstream != nil }
+
     var body: some View {
         HStack(spacing: 12) {
-            Badge(color: Color(nsColor: project.color.nsColor), letter: project.name.first.map(String.init) ?? "?")
+            Badge(
+                color: Color(nsColor: project.color.nsColor),
+                letter: project.name.first.map(String.init) ?? "?",
+                dimmed: !running
+            )
             VStack(alignment: .leading, spacing: 2) {
                 Text(project.name)
                     .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(running ? Steel.textPrimary : Steel.textSecondary)
                     .lineLimit(1)
                 Text(project.hostname)
                     .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(Steel.textSecondary)
+                    .foregroundStyle(running ? Steel.textSecondary : Steel.textTertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                if let detail = ownerDetail(owner, upstream: upstream) {
-                    Text(detail)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Steel.textTertiary)
-                        .lineLimit(1)
-                }
             }
-            Spacer(minLength: 4)
+            Spacer(minLength: 8)
             if copied {
                 StatusPill(text: "Copied", color: Steel.ice)
+            } else if hovering {
+                HStack(spacing: 2) {
+                    IconButton(symbol: "doc.on.doc", help: "Copy URL", action: copy)
+                    IconButton(symbol: "arrow.up.right", help: "Open in browser") { model.openProject(project.id) }
+                }
             } else if let port = upstream.flatMap(portOf) {
                 StatusPill(text: ":\(port)", color: Steel.ice)
             } else {
                 StatusPill(text: "Stopped", color: Steel.textTertiary)
             }
             MoreMenu {
+                if let detail = ownerHelp(owner, upstream: upstream) {
+                    Text(detail)
+                    Divider()
+                }
                 Button("Open in Browser") { model.openProject(project.id) }
-                Button("Copy URL") { copy() }
+                Button("Copy URL", action: copy)
                 Button("Reveal in Finder") { model.reveal(project.id) }
                 Divider()
                 Button("Settings…") { model.projectSettings(project.id) }
@@ -376,15 +408,18 @@ private struct RouteRow: View {
                 Text(hostname)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
-                if let detail = ownerDetail(owner, upstream: upstream) {
-                    Text(detail)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Steel.textTertiary)
-                        .lineLimit(1)
-                }
+                Text(ownerDetail(owner, upstream: upstream) ?? upstream)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Steel.textSecondary)
+                    .lineLimit(1)
             }
-            Spacer(minLength: 4)
-            if let port = portOf(upstream) {
+            Spacer(minLength: 8)
+            if hovering {
+                HStack(spacing: 2) {
+                    IconButton(symbol: "doc.on.doc", help: "Copy URL") { model.copyURL(hostname) }
+                    IconButton(symbol: "arrow.up.right", help: "Open in browser") { model.openRoute(hostname) }
+                }
+            } else if let port = portOf(upstream) {
                 StatusPill(text: ":\(port)", color: Steel.ice)
             }
             MoreMenu {
@@ -395,6 +430,7 @@ private struct RouteRow: View {
         .rowStyle(hovering: hovering)
         .onHover { hovering = $0 }
         .onTapGesture { model.openRoute(hostname) }
+        .help(ownerHelp(owner, upstream: upstream) ?? "Open \(hostname)")
     }
 }
 
@@ -418,13 +454,17 @@ private struct UnclaimedRow: View {
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                 Text(candidateDir.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? port.upstream)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: 11.5, design: .monospaced))
                     .foregroundStyle(Steel.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.head)
             }
-            Spacer(minLength: 4)
-            StatusPill(text: ":\(port.port)", color: Steel.amber)
+            Spacer(minLength: 8)
+            if hovering {
+                IconButton(symbol: "arrow.up.right", help: "Open localhost:\(port.port)") { model.openUnclaimed(port.port) }
+            } else {
+                StatusPill(text: ":\(port.port)", color: Steel.amber)
+            }
             MoreMenu {
                 Button("Open localhost:\(port.port)") { model.openUnclaimed(port.port) }
                 if let dir = candidateDir, !projects.contains(where: { $0.directory == dir }) {
@@ -461,11 +501,10 @@ private struct StatusRow<Trailing: View>: View {
                 .frame(width: 22)
             Text(title)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Steel.textSecondary)
             Spacer()
             trailing
         }
-        .padding(.vertical, 8)
+        .frame(minHeight: 40)
     }
 }
 
@@ -477,50 +516,22 @@ private struct Card<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) { content }
             .padding(.horizontal, 12)
-            .padding(.vertical, 4)
+            .padding(.vertical, 2)
             .background(SteelPanel())
-    }
-}
-
-/// Lists longer than this scroll instead of growing the popover.
-private struct Scrolling<Content: View>: View {
-    let count: Int
-    @ViewBuilder let content: Content
-
-    private static var visibleRows: Int { 6 }
-
-    var body: some View {
-        if count > Self.visibleRows {
-            ScrollView {
-                VStack(spacing: 0) { content }
-            }
-            .frame(height: CGFloat(Self.visibleRows) * 58)
-        } else {
-            VStack(spacing: 0) { content }
-        }
     }
 }
 
 private struct SectionHeader: View {
     let title: String
-    var detail: String?
-    init(_ title: String, detail: String? = nil) {
-        self.title = title
-        self.detail = detail
-    }
+    init(_ title: String) { self.title = title }
 
     var body: some View {
-        HStack {
-            Text(title.uppercased())
-                .font(.system(size: 11, weight: .semibold))
-                .kerning(0.6)
-            Spacer()
-            if let detail {
-                Text(detail).font(.system(size: 11))
-            }
-        }
-        .foregroundStyle(Steel.textSecondary)
-        .padding(.horizontal, 4)
+        Text(title.uppercased())
+            .font(.system(size: 10.5, weight: .semibold))
+            .kerning(0.7)
+            .foregroundStyle(Steel.textTertiary)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -539,6 +550,7 @@ private struct Badge: View {
     let color: Color
     var letter: String?
     var symbol: String?
+    var dimmed = false
 
     var body: some View {
         // Steel tile with a chrome edge; the colour lives in the glyph.
@@ -560,8 +572,8 @@ private struct Badge: View {
                             .font(.system(size: 13, weight: .semibold))
                     }
                 }
-                .foregroundStyle(color)
-                .shadow(color: color.opacity(0.7), radius: 3)
+                .foregroundStyle(color.opacity(dimmed ? 0.45 : 1))
+                .shadow(color: dimmed ? .clear : color.opacity(0.7), radius: 3)
             }
             .shadow(color: .black.opacity(0.5), radius: 3, y: 2)
     }
@@ -587,6 +599,69 @@ private struct StatusPill: View {
     }
 }
 
+/// "● Running" in the status colour, for the System tab.
+private struct StatusText: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 6, height: 6)
+                .shadow(color: color.opacity(0.9), radius: 2.5)
+            Text(text)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(color)
+        }
+    }
+}
+
+/// Small square icon button that lights up ice-blue on hover.
+private struct IconButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(hovering ? Steel.ice : Steel.textSecondary)
+                .frame(width: 26, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.white.opacity(hovering ? 0.08 : 0.04))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
+
+/// Compact steel button with a chrome edge.
+private struct SteelButton: View {
+    let title: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(hovering ? Steel.ice : Steel.textPrimary)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 4)
+                .background(SteelPanel(cornerRadius: 7, highlighted: hovering))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
 private struct MoreMenu<Content: View>: View {
     @ViewBuilder let content: Content
 
@@ -597,7 +672,7 @@ private struct MoreMenu<Content: View>: View {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Steel.textSecondary)
-                .frame(width: 24, height: 24)
+                .frame(width: 22, height: 24)
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
@@ -618,13 +693,13 @@ private struct CardButton: View {
             HStack(spacing: 12) {
                 Image(systemName: symbol)
                     .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 22)
+                    .frame(width: 32)
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
                 Spacer()
             }
             .foregroundStyle(hovering ? Steel.ice : Steel.textSecondary)
-            .padding(.vertical, 10)
+            .frame(minHeight: 40)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -642,10 +717,10 @@ private struct FooterButton: View {
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .frame(maxWidth: .infinity, minHeight: 34)
+                .font(.system(size: 12.5, weight: .medium))
+                .frame(maxWidth: .infinity, minHeight: 30)
                 .foregroundStyle(hovering ? Steel.ice : Steel.textPrimary)
-                .background(SteelPanel(cornerRadius: 10, highlighted: hovering))
+                .background(SteelPanel(cornerRadius: 9, highlighted: hovering))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -673,13 +748,13 @@ private struct EmptyState: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
+        .padding(.vertical, 18)
     }
 }
 
 private extension View {
     func rowStyle(hovering: Bool) -> some View {
-        padding(.vertical, 9)
+        frame(minHeight: 52)
             .padding(.horizontal, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
