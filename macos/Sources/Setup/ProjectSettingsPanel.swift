@@ -212,7 +212,7 @@ final class ProjectSettingsPanel: NSPanel {
             }
         )
 
-        contentView = NSHostingView(rootView: settingsView)
+        contentView = ClickThroughHostingView(rootView: settingsView)
     }
 
     private func confirmRemove(projectID: String) {

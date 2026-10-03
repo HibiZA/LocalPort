@@ -138,47 +138,16 @@ struct PopoverView: View {
     // MARK: - Tabs
 
     private var tabBar: some View {
-        HStack(spacing: 4) {
-            ForEach(Tab.allCases, id: \.self) { item in
-                let selected = tab == item
-                Button {
-                    tab = item
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: item.symbol)
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(item.title)
-                            .font(.system(size: 12.5, weight: .medium))
-                        if item == .ports && !state.unclaimed.isEmpty {
-                            Text("\(state.unclaimed.count)")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.black)
-                                .padding(.horizontal, 5)
-                                .frame(minWidth: 16, minHeight: 16)
-                                .background(Capsule().fill(Steel.amber))
-                        }
-                    }
-                    .foregroundStyle(selected ? Steel.ice : Steel.textSecondary)
-                    .shadow(color: selected ? Steel.ice.opacity(0.6) : .clear, radius: 3)
-                    .frame(maxWidth: .infinity, minHeight: 30)
-                    .background {
-                        if selected {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Steel.iceDeep.opacity(0.22))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .strokeBorder(Steel.ice.opacity(0.5), lineWidth: 1)
-                                )
-                        }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(item.shortcut)
-            }
-        }
-        .padding(4)
-        .background(SteelPanel(cornerRadius: 12))
+        SteelTabBar(
+            items: Tab.allCases.map {
+                .init(
+                    value: $0, symbol: $0.symbol, title: $0.title,
+                    badge: $0 == .ports ? state.unclaimed.count : nil,
+                    shortcut: $0.shortcut
+                )
+            },
+            selection: $tab
+        )
     }
 
     // MARK: - Projects

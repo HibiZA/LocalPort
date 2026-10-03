@@ -20,21 +20,60 @@ extension Notification.Name {
 
 // MARK: - SwiftUI Preferences View
 
-private struct PreferencesView: View {
-    var body: some View {
-        TabView {
-            GeneralSettings()
-                .tabItem { Label("General", systemImage: "gearshape") }
-            NetworkSettings()
-                .tabItem { Label("Network", systemImage: "network") }
-            CertificateSettings()
-                .tabItem { Label("Certificate", systemImage: "lock.shield") }
-            AdvancedSettings()
-                .tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
-            AboutView()
-                .tabItem { Label("About", systemImage: "info.circle") }
+private enum SettingsTab: CaseIterable {
+    case general, network, certificate, advanced, about
+
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .network: return "Network"
+        case .certificate: return "Certificate"
+        case .advanced: return "Advanced"
+        case .about: return "About"
         }
-        .frame(width: 520, height: 560)
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: return "gearshape"
+        case .network: return "network"
+        case .certificate: return "lock.shield"
+        case .advanced: return "wrench.and.screwdriver"
+        case .about: return "info.circle"
+        }
+    }
+}
+
+private struct PreferencesView: View {
+    @State private var tab: SettingsTab = .general
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SteelTabBar(
+                items: SettingsTab.allCases.enumerated().map { index, item in
+                    .init(
+                        value: item, symbol: item.symbol, title: item.title,
+                        shortcut: KeyEquivalent(Character(String(index + 1)))
+                    )
+                },
+                selection: $tab,
+                vertical: true
+            )
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            Group {
+                switch tab {
+                case .general: GeneralSettings()
+                case .network: NetworkSettings()
+                case .certificate: CertificateSettings()
+                case .advanced: AdvancedSettings()
+                case .about: AboutView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: 520, height: 600)
         .background(Steel.background)
         .tint(Steel.ice)
         .environment(\.colorScheme, .dark)
@@ -438,7 +477,7 @@ final class PreferencesWindowController: NSWindowController {
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 600),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -450,7 +489,7 @@ final class PreferencesWindowController: NSWindowController {
 
         super.init(window: window)
 
-        window.contentView = NSHostingView(rootView: PreferencesView())
+        window.contentView = ClickThroughHostingView(rootView: PreferencesView())
     }
 
     @available(*, unavailable)
@@ -458,10 +497,11 @@ final class PreferencesWindowController: NSWindowController {
 
     func showWindow() {
         NSApp.setActivationPolicy(.regular)
-        // Fresh view each time so it reflects the current config.
-        window?.contentView = NSHostingView(rootView: PreferencesView())
-        window?.makeKeyAndOrderFront(nil)
+        // Activate before showing, so the window opens key and takes clicks.
         NSApp.activate(ignoringOtherApps: true)
+        // Fresh view each time so it reflects the current config.
+        window?.contentView = ClickThroughHostingView(rootView: PreferencesView())
+        window?.makeKeyAndOrderFront(nil)
 
         if closeObserver == nil {
             closeObserver = NotificationCenter.default.addObserver(
