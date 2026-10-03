@@ -118,6 +118,7 @@ private struct ProjectSettingsView: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
 
             // Bottom bar
             HStack {
@@ -147,6 +148,9 @@ private struct ProjectSettingsView: View {
             .padding(.bottom, 16)
         }
         .frame(width: 420, height: 410)
+        .background(Steel.background)
+        .tint(Steel.ice)
+        .environment(\.colorScheme, .dark)
     }
 
     /// Only an *edited* hostname becomes an override, so a hostname that came
@@ -175,6 +179,7 @@ final class ProjectSettingsPanel: NSPanel {
         )
 
         title = "Project Settings"
+        appearance = NSAppearance(named: .darkAqua)
         level = .floating
         center()
 
@@ -207,7 +212,7 @@ final class ProjectSettingsPanel: NSPanel {
             }
         )
 
-        contentView = NSHostingView(rootView: settingsView)
+        contentView = ClickThroughHostingView(rootView: settingsView)
     }
 
     private func confirmRemove(projectID: String) {

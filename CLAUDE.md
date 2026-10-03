@@ -62,12 +62,17 @@ supervises the daemon and handles UI and privileged setup.
   triggers system setup, and handles add/edit/remove and uninstall.
 - `System/DaemonSupervisor` — launches `localportd` (logs to `~/Library/Logs/LocalPort`),
   restarts it on unexpected exit.
-- `System/SystemSetup` — runs `scripts/setup.sh` / `uninstall.sh` and CA trust via one
-  admin prompt. `SystemSetup.currentVersion` forces a re-run when setup changes.
+- `System/SystemSetup` — runs `scripts/setup.sh` / `uninstall.sh` via the admin prompt.
+  CA trust is set in-process (`SecTrustSettings`), since macOS rejects admin trust
+  changes from the prompt's root shell. `SystemSetup.currentVersion` forces a re-run
+  when setup changes.
+- `System/ProcessStats` — CPU/memory (`proc_pid_rusage`), GPU (IOAccelerator clients in
+  the IORegistry) and network (`nettop`) per pid; runs only while the Ports tab is open.
 - `System/ConfigFile` — reads and writes the daemon's `config.toml`, which is the single
   source of truth for TLD and ports.
 - `IPC/DaemonClient` — synchronous, thread-safe socket client. Never call it on the main thread.
-- `MenuBar/MenuBarController` — the menu is rebuilt in `menuNeedsUpdate`.
+- `MenuBar/MenuBarController` — status item + `NSPopover`; `PopoverView` (SwiftUI) renders
+  `MenuState` from a `PopoverModel` and forwards actions to the delegate.
 - `Models/Project` — `id` is the directory. `slug` is the daemon's project name.
 
 ## IPC Protocol

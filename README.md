@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/HibiZA/LocalPort/releases/latest"><img src="https://img.shields.io/github/v/release/HibiZA/LocalPort?style=flat-square&label=release&color=blue" alt="Latest Release"></a>
-  <a href="https://github.com/HibiZA/LocalPort/blob/main/LICENSE"><img src="https://img.shields.io/github/license/HibiZA/LocalPort?style=flat-square&color=green" alt="License"></a>
+  <a href="https://github.com/HibiZA/LocalPort/blob/master/LICENSE"><img src="https://img.shields.io/github/license/HibiZA/LocalPort?style=flat-square&color=green" alt="License"></a>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/rust-%E2%9C%93-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/swift-%E2%9C%93-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
@@ -53,27 +53,14 @@ https://dashboard.test → localhost:5173
 
 ## How It Works
 
-1. Add a project from the menu bar (click the LocalPort icon → **Add Project...**)
+1. Add a project from the menu bar (click the LocalPort icon → **Add Project…**)
 2. Start your dev server however you normally do
 3. LocalPort auto-detects the listening port and maps it to `yourproject.test`
 4. Open `https://yourproject.test` in your browser
 
-The menu bar app shows which projects are running and on which ports:
+The menu bar app shows which projects are running, on which ports, and what they cost in CPU, GPU, memory and network:
 
-```
-LocalPort
-────────────────────────────────
-● my-app
-    my-app.test · :3000 · running
-● api-server
-    api-server.test · :8080 · running
-○ dashboard
-    dashboard.test · stopped
-────────────────────────────────
-Add Project...
-Preferences...
-Quit LocalPort
-```
+<p align="center"><img src="docs/popover.png" width="380" alt="LocalPort popover"></p>
 
 ## Install
 
@@ -94,16 +81,16 @@ cp -r build/LocalPort.app /Applications/
 
 ### First Launch
 
-On first launch, LocalPort asks for your password once to:
-- Set up DNS resolution for `*.test` domains
-- Trust LocalPort's local certificate authority for HTTPS
-- Configure port forwarding (80 → 47080, 443 → 47443), re-applied automatically at boot and after macOS updates
+On first launch LocalPort sets up your Mac with two prompts:
 
-If Caddy isn't installed, a pinned, checksum-verified release is downloaded automatically. LocalPort checks this configuration on every launch and asks again only if something is missing (for example after you change the TLD).
+1. **Your password**, to set up DNS resolution for `*.test` domains and port forwarding (80 → 47080, 443 → 47443). The forwarding is re-applied automatically at boot and after macOS updates.
+2. **A macOS dialog to change Certificate Trust Settings**, so browsers trust LocalPort's local certificate authority for HTTPS. macOS only lets an app with a window on screen change trust settings, so this can't be part of the password prompt.
+
+If Caddy isn't installed, a pinned, checksum-verified release is downloaded automatically. LocalPort checks this configuration on every launch and asks again only if something is missing (for example after you change the TLD or ports). You can also re-run either step from **Settings → Advanced** and **Settings → Certificate**.
 
 ## Usage
 
-1. Click the LocalPort icon in the menu bar → **Add Project...**
+1. Click the LocalPort icon in the menu bar → **Add Project…**
 2. Select your project directory
 3. Start your dev server as usual:
 
@@ -115,15 +102,44 @@ npm run dev
 
 That's it. LocalPort handles the rest.
 
-### The menu
+### The menu bar popover
 
-Each project's submenu shows which process is serving it (for example `node (pid 4242) · [::1]:5173`) and offers **Open in Browser**, **Copy URL**, **Reveal in Finder** and **Settings...**.
+Click the LocalPort icon to open the popover. It has three tabs (⌘1–⌘3):
 
-**Unclaimed Ports** lists dev servers LocalPort can see but can't attribute to a project. For each one you can:
+- **Projects** — each project with its hostname and port, running ones first. Click a project to open it in your browser. Hover a row for **Copy URL** and **Open** buttons; its **•••** menu has **Open in Browser**, **Copy URL**, **Reveal in Finder** and **Settings…**, and shows which process serves it (for example `node (pid 4242) on [::1]:5173`). **Add Project…** (⌘N) is at the bottom of the list.
+- **Ports** — every server LocalPort sees: project servers, other routes (such as servers started with `localport run` for a project you haven't added) and unclaimed ports, each with its [resource usage](#resource-usage).
+- **System** — whether the daemon and the HTTPS proxy are running (with the proxy's error if it failed), the TLD, the number of active routes, a button to start or stop the daemon, and **Open Logs**.
+
+**Unclaimed** ports are dev servers LocalPort can see but can't attribute to a project. Each one's **•••** menu offers:
 - **Add "folder" as Project** — register the folder the server is running in
-- **Assign to Project** — route that port to an existing project whatever process listens on it. Use this for servers that don't run from the project folder, such as a Docker-published port. You can also set it in Settings with a port and **Claim this port**.
+- **Assign to Project** — route that port to an existing project whatever process listens on it. Use this for servers that don't run from the project folder, such as a Docker-published port. You can also set it in a project's **Settings…** with a port and **Claim this port**.
 
-macOS system services, debugger and ephemeral ports, and sockets bound to VPN/LAN addresses are left out of this list.
+macOS system services, debugger and ephemeral ports, and sockets bound to VPN/LAN addresses are left out of this list. You can hide the list in **Settings → Network**.
+
+### Resource usage
+
+Under each server, the Ports tab shows the listening process's:
+
+| | Source |
+|---|---|
+| **CPU** | CPU time from `proc_pid_rusage`, as a share of one core (can pass 100% on several cores) |
+| **GPU** | GPU time macOS records per process, the same source Activity Monitor uses |
+| **MEM** | Physical memory footprint, the figure Activity Monitor shows as Memory |
+| **NET** | Bytes per second in (↓) and out (↑), from a one-second `nettop` sample |
+
+CPU and GPU turn amber above one busy core and red above two. LocalPort samples every 2 seconds and only while the popover is open on the Ports tab, so it costs nothing otherwise. None of this needs extra permissions.
+
+The figures cover the process that holds the listening socket, not processes it starts (such as a dev server's workers). For a Docker-published port that process is Docker's helper, not the container.
+
+### Settings
+
+Open **Settings** from the popover (⌘,). Its tabs (⌘1–⌘5):
+
+- **General** — launch at login, which browser opens projects, notifications when a project starts or stops (click one to open the project), automatic update checks.
+- **Network** — the TLD, whether to list unclaimed ports, and the HTTP / HTTPS / DNS ports LocalPort listens on. Changing ports restarts the daemon and asks for your password once to update the port forwarding.
+- **Certificate** — whether your Mac trusts LocalPort's local certificate authority, with **Trust Certificate…** if it doesn't.
+- **Advanced** — the daemon's log level, restart the daemon, run setup again, open the logs or `config.toml`, and uninstall.
+- **About** — version and links.
 
 ### Monorepos and explicit tagging
 
@@ -176,7 +192,7 @@ log_level = "info"
 dns_port = 5553
 ```
 
-The TLD can also be changed in **Preferences**, which updates this file and restarts the daemon.
+The TLD, ports and log level can also be changed in **Settings**, which updates this file and restarts the daemon.
 
 ### Per-Project Config (Optional)
 
@@ -189,13 +205,13 @@ hostname = "my-app"     # a bare label gets the TLD appended; "api.my-app.test" 
 port = 5173             # route only this port (see below)
 ```
 
-Hostname and port can also be set per project in the app's **Settings...** panel, and these take precedence over the file.
+Hostname and port can also be set per project from its **•••** menu → **Settings…**, and these take precedence over the file.
 
 When a project has several listening ports (dev server, debugger, Storybook, internal workers), LocalPort routes the most likely dev server: the lowest port, skipping Node's inspector (9229) and ephemeral ports. Set `port` to choose explicitly.
 
 ### Logs
 
-The daemon and Caddy log to `~/Library/Logs/LocalPort/` (**Open Logs** in the menu). If the proxy fails, the menu shows the error and LocalPort restarts it automatically.
+The daemon and Caddy log to `~/Library/Logs/LocalPort/` (**System → Open Logs** in the popover). If the proxy fails, the popover shows the error and LocalPort restarts it automatically.
 
 ## Architecture
 
@@ -217,7 +233,7 @@ Browser → https://myapp.test
 
 | Component | Language | Purpose |
 |-----------|----------|---------|
-| `LocalPort.app` | Swift | macOS menu bar app — manages everything |
+| `LocalPort.app` | Swift | Menu bar app — popover and settings UI, supervises the daemon, system setup, resource usage sampling |
 | `localportd` | Rust | Daemon — Caddy management, DNS responder, port watcher, IPC |
 | `localport` | Rust | CLI — `localport run` tags a server with its project for ground-truth attribution |
 | Caddy | Go | Reverse proxy with automatic HTTPS (auto-downloaded) |
@@ -239,7 +255,7 @@ A tag always overrides the directory heuristic. Each project gets one route. If 
 
 ## Uninstall
 
-**Preferences → Uninstall LocalPort...** removes the DNS resolver, port forwarding, the trusted local CA, LocalPort's data and logs, and the app itself.
+**Settings → Advanced → Uninstall LocalPort…** removes the DNS resolver, port forwarding, the trusted local CA, LocalPort's data and logs, and the app itself. Removing the CA's trust shows a macOS dialog, in addition to the password prompt.
 
 ## Contributing
 
