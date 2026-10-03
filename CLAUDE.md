@@ -66,6 +66,8 @@ supervises the daemon and handles UI and privileged setup.
   CA trust is set in-process (`SecTrustSettings`), since macOS rejects admin trust
   changes from the prompt's root shell. `SystemSetup.currentVersion` forces a re-run
   when setup changes.
+- `System/ProcessStats` — CPU/memory (`proc_pid_rusage`), GPU (IOAccelerator clients in
+  the IORegistry) and network (`nettop`) per pid; runs only while the Ports tab is open.
 - `System/ConfigFile` — reads and writes the daemon's `config.toml`, which is the single
   source of truth for TLD and ports.
 - `IPC/DaemonClient` — synchronous, thread-safe socket client. Never call it on the main thread.

@@ -107,7 +107,7 @@ That's it. LocalPort handles the rest.
 Click the LocalPort icon to open the popover. It has three tabs:
 
 - **Projects** — each project with its hostname and port. A running project also shows which process serves it (for example `node · localport run`; hover for the pid and address). Click a project to open it, or use its **•••** menu for **Open in Browser**, **Copy URL**, **Reveal in Finder** and **Settings...**.
-- **Ports** — unclaimed ports and other live routes (see below).
+- **Ports** — every server LocalPort sees (project servers, other routes, unclaimed ports) with live CPU, GPU, memory and network use of the listening process. LocalPort samples these only while this tab is open.
 - **System** — daemon and proxy status, with the proxy error if it failed, the TLD, and **Open Logs**.
 
 **Unclaimed Ports** lists dev servers LocalPort can see but can't attribute to a project. For each one you can:

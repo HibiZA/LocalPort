@@ -5,6 +5,9 @@ import SwiftUI
 final class PopoverModel: ObservableObject {
     @Published var state = MenuState()
     @Published var availableUpdate: String?
+    /// Resource usage by pid, sampled only while the Ports tab is showing.
+    @Published var stats: [Int32: ProcessStats] = [:]
+    @Published var portsTabVisible = false
 
     var openProject: (String) -> Void = { _ in }
     var openRoute: (String) -> Void = { _ in }
@@ -78,11 +81,20 @@ struct PopoverView: View {
                 .padding(.bottom, 8)
             }
             .frame(height: Self.contentHeight)
+            // Fade the bottom edge so a list that continues reads as scrollable.
+            .mask(
+                LinearGradient(
+                    stops: [.init(color: .black, location: 0.9), .init(color: .clear, location: 1)],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
             .padding(.horizontal, -4)
             footer
         }
         .padding(16)
         .frame(width: 380)
+        .onAppear { model.portsTabVisible = tab == .ports }
+        .onChange(of: tab) { model.portsTabVisible = $0 == .ports }
         .foregroundStyle(Steel.textPrimary)
         .background(Steel.background)
         .environment(\.colorScheme, .dark)
@@ -185,8 +197,52 @@ struct PopoverView: View {
 
     // MARK: - Ports
 
+    private var runningProjects: [Project] {
+        state.projects.filter { state.upstreams[$0.id] != nil }
+    }
+
+    private func stats(for pid: Int?) -> ProcessStats? {
+        pid.flatMap { model.stats[Int32($0)] }
+    }
+
     private var portsTab: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if !runningProjects.isEmpty {
+                SectionHeader("Project servers")
+                Card {
+                    ForEach(Array(runningProjects.enumerated()), id: \.element.id) { index, project in
+                        if index > 0 { RowDivider() }
+                        let owner = state.owners[project.hostname]
+                        ProjectRow(
+                            project: project,
+                            upstream: state.upstreams[project.id],
+                            owner: owner,
+                            model: model,
+                            stats: .some(stats(for: owner?.pid))
+                        )
+                    }
+                }
+                .padding(.bottom, 8)
+            }
+
+            if !state.otherRoutes.isEmpty {
+                SectionHeader("Other routes")
+                Card {
+                    ForEach(Array(state.otherRoutes.enumerated()), id: \.element.hostname) { index, route in
+                        if index > 0 { RowDivider() }
+                        let owner = state.owners[route.hostname]
+                        RouteRow(
+                            hostname: route.hostname,
+                            upstream: route.upstream,
+                            owner: owner,
+                            model: model,
+                            stats: .some(stats(for: owner?.pid))
+                        )
+                    }
+                }
+                .padding(.bottom, 8)
+            }
+
             SectionHeader("Unclaimed")
             Card {
                 if state.unclaimed.isEmpty {
@@ -198,21 +254,9 @@ struct PopoverView: View {
                 } else {
                     ForEach(Array(state.unclaimed.enumerated()), id: \.element.port) { index, port in
                         if index > 0 { RowDivider() }
-                        UnclaimedRow(port: port, projects: state.projects, model: model)
-                    }
-                }
-            }
-
-            if !state.otherRoutes.isEmpty {
-                SectionHeader("Other routes").padding(.top, 8)
-                Card {
-                    ForEach(Array(state.otherRoutes.enumerated()), id: \.element.hostname) { index, route in
-                        if index > 0 { RowDivider() }
-                        RouteRow(
-                            hostname: route.hostname,
-                            upstream: route.upstream,
-                            owner: state.owners[route.hostname],
-                            model: model
+                        UnclaimedRow(
+                            port: port, projects: state.projects, model: model,
+                            stats: .some(stats(for: port.pid))
                         )
                     }
                 }
@@ -298,6 +342,8 @@ private struct ProjectRow: View {
     let upstream: String?
     let owner: RouteOwner?
     let model: PopoverModel
+    /// Outer `nil`: no stats line; inner `nil`: not measured yet.
+    var stats: ProcessStats?? = nil
 
     @State private var hovering = false
     @State private var copied = false
@@ -305,48 +351,52 @@ private struct ProjectRow: View {
     private var running: Bool { upstream != nil }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Badge(
-                color: Color(nsColor: project.color.nsColor),
-                letter: project.name.first.map(String.init) ?? "?",
-                dimmed: !running
-            )
-            VStack(alignment: .leading, spacing: 2) {
-                Text(project.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(running ? Steel.textPrimary : Steel.textSecondary)
-                    .lineLimit(1)
-                Text(project.hostname)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(running ? Steel.textSecondary : Steel.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer(minLength: 8)
-            if copied {
-                StatusPill(text: "Copied", color: Steel.ice)
-            } else if hovering {
-                HStack(spacing: 2) {
-                    IconButton(symbol: "doc.on.doc", help: "Copy URL", action: copy)
-                    IconButton(symbol: "arrow.up.right", help: "Open in browser") { model.openProject(project.id) }
+        VStack(spacing: 6) {
+            HStack(spacing: 12) {
+                Badge(
+                    color: Color(nsColor: project.color.nsColor),
+                    letter: project.name.first.map(String.init) ?? "?",
+                    dimmed: !running
+                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(project.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(running ? Steel.textPrimary : Steel.textSecondary)
+                        .lineLimit(1)
+                    Text(project.hostname)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(running ? Steel.textSecondary : Steel.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-            } else if let port = upstream.flatMap(portOf) {
-                StatusPill(text: ":\(port)", color: Steel.ice)
-            } else {
-                StatusPill(text: "Stopped", color: Steel.textTertiary)
-            }
-            MoreMenu {
-                if let detail = ownerHelp(owner, upstream: upstream) {
-                    Text(detail)
+                Spacer(minLength: 8)
+                if copied {
+                    StatusPill(text: "Copied", color: Steel.ice)
+                } else if hovering {
+                    HStack(spacing: 2) {
+                        IconButton(symbol: "doc.on.doc", help: "Copy URL", action: copy)
+                        IconButton(symbol: "arrow.up.right", help: "Open in browser") { model.openProject(project.id) }
+                    }
+                } else if let port = upstream.flatMap(portOf) {
+                    StatusPill(text: ":\(port)", color: Steel.ice)
+                } else {
+                    StatusPill(text: "Stopped", color: Steel.textTertiary)
+                }
+                MoreMenu {
+                    if let detail = ownerHelp(owner, upstream: upstream) {
+                        Text(detail)
+                        Divider()
+                    }
+                    Button("Open in Browser") { model.openProject(project.id) }
+                    Button("Copy URL", action: copy)
+                    Button("Reveal in Finder") { model.reveal(project.id) }
                     Divider()
+                    Button("Settings…") { model.projectSettings(project.id) }
                 }
-                Button("Open in Browser") { model.openProject(project.id) }
-                Button("Copy URL", action: copy)
-                Button("Reveal in Finder") { model.reveal(project.id) }
-                Divider()
-                Button("Settings…") { model.projectSettings(project.id) }
             }
+            if let stats { StatsLine(stats: stats).padding(.leading, 44) }
         }
+        .padding(.vertical, stats == nil ? 0 : 8)
         .rowStyle(hovering: hovering)
         .onHover { hovering = $0 }
         .onTapGesture { model.openProject(project.id) }
@@ -367,35 +417,40 @@ private struct RouteRow: View {
     let upstream: String
     let owner: RouteOwner?
     let model: PopoverModel
+    var stats: ProcessStats?? = nil
 
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Badge(color: Steel.ice, symbol: "arrow.triangle.branch")
-            VStack(alignment: .leading, spacing: 2) {
-                Text(hostname)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Text(ownerDetail(owner, upstream: upstream) ?? upstream)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Steel.textSecondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            if hovering {
-                HStack(spacing: 2) {
-                    IconButton(symbol: "doc.on.doc", help: "Copy URL") { model.copyURL(hostname) }
-                    IconButton(symbol: "arrow.up.right", help: "Open in browser") { model.openRoute(hostname) }
+        VStack(spacing: 6) {
+            HStack(spacing: 12) {
+                Badge(color: Steel.ice, symbol: "arrow.triangle.branch")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hostname)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                    Text(ownerDetail(owner, upstream: upstream) ?? upstream)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Steel.textSecondary)
+                        .lineLimit(1)
                 }
-            } else if let port = portOf(upstream) {
-                StatusPill(text: ":\(port)", color: Steel.ice)
+                Spacer(minLength: 8)
+                if hovering {
+                    HStack(spacing: 2) {
+                        IconButton(symbol: "doc.on.doc", help: "Copy URL") { model.copyURL(hostname) }
+                        IconButton(symbol: "arrow.up.right", help: "Open in browser") { model.openRoute(hostname) }
+                    }
+                } else if let port = portOf(upstream) {
+                    StatusPill(text: ":\(port)", color: Steel.ice)
+                }
+                MoreMenu {
+                    Button("Open in Browser") { model.openRoute(hostname) }
+                    Button("Copy URL") { model.copyURL(hostname) }
+                }
             }
-            MoreMenu {
-                Button("Open in Browser") { model.openRoute(hostname) }
-                Button("Copy URL") { model.copyURL(hostname) }
-            }
+            if let stats { StatsLine(stats: stats).padding(.leading, 44) }
         }
+        .padding(.vertical, stats == nil ? 0 : 8)
         .rowStyle(hovering: hovering)
         .onHover { hovering = $0 }
         .onTapGesture { model.openRoute(hostname) }
@@ -407,6 +462,7 @@ private struct UnclaimedRow: View {
     let port: UnclaimedPort
     let projects: [Project]
     let model: PopoverModel
+    var stats: ProcessStats?? = nil
 
     @State private var hovering = false
 
@@ -416,40 +472,44 @@ private struct UnclaimedRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Badge(color: Steel.amber, symbol: "dot.radiowaves.left.and.right")
-            VStack(alignment: .leading, spacing: 2) {
-                Text(port.process.map(friendlyName) ?? "pid \(port.pid)")
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Text(candidateDir.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? port.upstream)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(Steel.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-            }
-            Spacer(minLength: 8)
-            if hovering {
-                IconButton(symbol: "arrow.up.right", help: "Open localhost:\(port.port)") { model.openUnclaimed(port.port) }
-            } else {
-                StatusPill(text: ":\(port.port)", color: Steel.amber)
-            }
-            MoreMenu {
-                Button("Open localhost:\(port.port)") { model.openUnclaimed(port.port) }
-                if let dir = candidateDir, !projects.contains(where: { $0.directory == dir }) {
-                    Button("Add \u{201C}\((dir as NSString).lastPathComponent)\u{201D} as Project") {
-                        model.addProjectAt(dir)
-                    }
+        VStack(spacing: 6) {
+            HStack(spacing: 12) {
+                Badge(color: Steel.amber, symbol: "dot.radiowaves.left.and.right")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(port.process.map(friendlyName) ?? "pid \(port.pid)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                    Text(candidateDir.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? port.upstream)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(Steel.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
                 }
-                if !projects.isEmpty {
-                    Menu("Assign to Project") {
-                        ForEach(projects) { project in
-                            Button(project.name) { model.assign(port.port, project.id) }
+                Spacer(minLength: 8)
+                if hovering {
+                    IconButton(symbol: "arrow.up.right", help: "Open localhost:\(port.port)") { model.openUnclaimed(port.port) }
+                } else {
+                    StatusPill(text: ":\(port.port)", color: Steel.amber)
+                }
+                MoreMenu {
+                    Button("Open localhost:\(port.port)") { model.openUnclaimed(port.port) }
+                    if let dir = candidateDir, !projects.contains(where: { $0.directory == dir }) {
+                        Button("Add \u{201C}\((dir as NSString).lastPathComponent)\u{201D} as Project") {
+                            model.addProjectAt(dir)
+                        }
+                    }
+                    if !projects.isEmpty {
+                        Menu("Assign to Project") {
+                            ForEach(projects) { project in
+                                Button(project.name) { model.assign(port.port, project.id) }
+                            }
                         }
                     }
                 }
             }
+            if let stats { StatsLine(stats: stats).padding(.leading, 44) }
         }
+        .padding(.vertical, stats == nil ? 0 : 8)
         .rowStyle(hovering: hovering)
         .onHover { hovering = $0 }
         .onTapGesture { model.openUnclaimed(port.port) }
@@ -474,6 +534,67 @@ private struct StatusRow<Trailing: View>: View {
             trailing
         }
         .frame(minHeight: 40)
+    }
+}
+
+/// CPU · GPU · MEM · NET for the process behind a port.
+private struct StatsLine: View {
+    let stats: ProcessStats?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            column("CPU", stats?.cpuPercent.map(percent), color: load(stats?.cpuPercent))
+                .frame(width: 54, alignment: .leading)
+            column("GPU", stats?.gpuPercent.map(percent), color: load(stats?.gpuPercent))
+                .frame(width: 54, alignment: .leading)
+            column("MEM", stats?.memoryBytes.map(bytes))
+                .frame(width: 64, alignment: .leading)
+            column("NET", network)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .help("Resource use of the listening process; network is bytes per second in ↓ and out ↑.")
+    }
+
+    private func column(_ label: String, _ value: String?, color: Color = Steel.textPrimary) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.system(size: 8.5, weight: .semibold))
+                .kerning(0.6)
+                .foregroundStyle(Steel.textTertiary)
+            Text(value ?? "—")
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(value == nil ? Steel.textTertiary : color)
+                .lineLimit(1)
+        }
+    }
+
+    private var network: String? {
+        guard let down = stats?.netInPerSecond, let up = stats?.netOutPerSecond else { return nil }
+        return "↓\(rate(down)) ↑\(rate(up))"
+    }
+
+    /// Ice by default; amber above one busy core, red above two.
+    private func load(_ value: Double?) -> Color {
+        guard let value else { return Steel.textPrimary }
+        return value >= 200 ? Steel.danger : value >= 80 ? Steel.amber : Steel.ice
+    }
+
+    private func percent(_ value: Double) -> String {
+        value < 10 ? String(format: "%.1f%%", value) : String(format: "%.0f%%", value)
+    }
+
+    private func bytes(_ value: UInt64) -> String {
+        let mb = Double(value) / 1_048_576
+        return mb >= 1024 ? String(format: "%.1f GB", mb / 1024) : String(format: "%.0f MB", mb)
+    }
+
+    private func rate(_ bytesPerSecond: Double) -> String {
+        switch bytesPerSecond {
+        case ..<1: return "0"
+        case ..<1024: return String(format: "%.0fB", bytesPerSecond)
+        case ..<(1024 * 1024): return String(format: "%.0fK", bytesPerSecond / 1024)
+        default: return String(format: "%.1fM", bytesPerSecond / 1_048_576)
+        }
     }
 }
 

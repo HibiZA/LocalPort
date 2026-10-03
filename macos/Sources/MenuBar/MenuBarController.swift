@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import os.log
 
@@ -47,6 +48,8 @@ final class MenuBarController: NSObject {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private let model = PopoverModel()
+    private let statsSampler = ProcessStatsSampler()
+    private var portsTabObserver: AnyCancellable?
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -62,6 +65,13 @@ final class MenuBarController: NSObject {
         popover.contentViewController = host
         popover.behavior = .transient
         popover.appearance = NSAppearance(named: .darkAqua)
+        popover.delegate = self
+
+        statsSampler.pids = { [weak self] in self?.portPids() ?? [] }
+        statsSampler.onUpdate = { [weak self] stats in self?.model.stats = stats }
+        portsTabObserver = model.$portsTabVisible
+            .removeDuplicates()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.updateSampler() } }
         popover.animates = true
 
         logger.info("MenuBarController ready")
@@ -86,6 +96,24 @@ final class MenuBarController: NSObject {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
+    }
+
+    /// Sample resource usage only while the Ports tab is on screen.
+    private func updateSampler() {
+        if popover.isShown && model.portsTabVisible {
+            statsSampler.start()
+        } else if statsSampler.isRunning {
+            statsSampler.stop()
+            model.stats = [:]
+        }
+    }
+
+    /// The processes behind every port the Ports tab lists.
+    private func portPids() -> Set<Int32> {
+        let state = model.state
+        var pids = Set(state.owners.values.map { Int32($0.pid) })
+        pids.formUnion(state.unclaimed.map { Int32($0.pid) })
+        return pids
     }
 
     /// Close the popover, then run `action`; used for anything that opens a
@@ -162,5 +190,17 @@ final class MenuBarController: NSObject {
         }
         image.isTemplate = true
         return image
+    }
+}
+
+// MARK: - NSPopoverDelegate
+
+extension MenuBarController: NSPopoverDelegate {
+    func popoverDidShow(_ notification: Notification) {
+        updateSampler()
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        updateSampler()
     }
 }
