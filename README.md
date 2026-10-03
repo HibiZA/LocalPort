@@ -60,20 +60,7 @@ https://dashboard.test → localhost:5173
 
 The menu bar app shows which projects are running and on which ports:
 
-```
-LocalPort
-────────────────────────────────
-● my-app
-    my-app.test · :3000 · running
-● api-server
-    api-server.test · :8080 · running
-○ dashboard
-    dashboard.test · stopped
-────────────────────────────────
-Add Project...
-Preferences...
-Quit LocalPort
-```
+<p align="center"><img src="docs/popover.png" width="360" alt="LocalPort popover"></p>
 
 ## Install
 
@@ -115,9 +102,13 @@ npm run dev
 
 That's it. LocalPort handles the rest.
 
-### The menu
+### The menu bar popover
 
-Each project's submenu shows which process is serving it (for example `node (pid 4242) · [::1]:5173`) and offers **Open in Browser**, **Copy URL**, **Reveal in Finder** and **Settings...**.
+Click the LocalPort icon to open the popover. It has three tabs:
+
+- **Projects** — each project with its hostname and port. A running project also shows which process serves it (for example `node · localport run`; hover for the pid and address). Click a project to open it, or use its **•••** menu for **Open in Browser**, **Copy URL**, **Reveal in Finder** and **Settings...**.
+- **Ports** — unclaimed ports and other live routes (see below).
+- **System** — daemon and proxy status, with the proxy error if it failed, the TLD, and **Open Logs**.
 
 **Unclaimed Ports** lists dev servers LocalPort can see but can't attribute to a project. For each one you can:
 - **Add "folder" as Project** — register the folder the server is running in
@@ -195,7 +186,7 @@ When a project has several listening ports (dev server, debugger, Storybook, int
 
 ### Logs
 
-The daemon and Caddy log to `~/Library/Logs/LocalPort/` (**Open Logs** in the menu). If the proxy fails, the menu shows the error and LocalPort restarts it automatically.
+The daemon and Caddy log to `~/Library/Logs/LocalPort/` (**System → Open Logs** in the popover). If the proxy fails, the popover shows the error and LocalPort restarts it automatically.
 
 ## Architecture
 

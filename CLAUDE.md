@@ -69,7 +69,8 @@ supervises the daemon and handles UI and privileged setup.
 - `System/ConfigFile` — reads and writes the daemon's `config.toml`, which is the single
   source of truth for TLD and ports.
 - `IPC/DaemonClient` — synchronous, thread-safe socket client. Never call it on the main thread.
-- `MenuBar/MenuBarController` — the menu is rebuilt in `menuNeedsUpdate`.
+- `MenuBar/MenuBarController` — status item + `NSPopover`; `PopoverView` (SwiftUI) renders
+  `MenuState` from a `PopoverModel` and forwards actions to the delegate.
 - `Models/Project` — `id` is the directory. `slug` is the daemon's project name.
 
 ## IPC Protocol

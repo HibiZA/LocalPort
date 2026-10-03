@@ -433,6 +433,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             daemonConnected: daemonInfo != nil,
             proxyState: daemonInfo?.proxy.state,
             proxyError: daemonInfo?.proxy.error,
+            tld: daemonInfo?.tld,
             projects: projects,
             upstreams: upstreams,
             otherRoutes: otherRoutes,
