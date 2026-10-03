@@ -61,6 +61,7 @@ final class MenuBarController: NSObject {
         host.sizingOptions = .preferredContentSize
         popover.contentViewController = host
         popover.behavior = .transient
+        popover.appearance = NSAppearance(named: .darkAqua)
         popover.animates = true
 
         logger.info("MenuBarController ready")

@@ -65,6 +65,9 @@ struct PopoverView: View {
         }
         .padding(16)
         .frame(width: 360)
+        .foregroundStyle(Steel.textPrimary)
+        .background(Steel.background)
+        .environment(\.colorScheme, .dark)
     }
 
     // MARK: - Header
@@ -75,12 +78,14 @@ struct PopoverView: View {
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 56, height: 56)
-                .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+                .shadow(color: Steel.ice.opacity(0.18), radius: 14)
+                .shadow(color: .black.opacity(0.6), radius: 6, y: 3)
             HStack(spacing: 6) {
                 Circle().fill(health.color).frame(width: 7, height: 7)
+                    .shadow(color: health.color.opacity(0.8), radius: 3)
                 Text(health.label)
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Steel.textSecondary)
             }
             if let version = model.availableUpdate {
                 Button(action: model.openUpdate) {
@@ -88,8 +93,9 @@ struct PopoverView: View {
                         .font(.system(size: 11.5, weight: .semibold))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.18)))
-                        .foregroundStyle(Color.accentColor)
+                        .background(Capsule().fill(Steel.ice.opacity(0.12)))
+                        .overlay(Capsule().strokeBorder(Steel.ice.opacity(0.45)))
+                        .foregroundStyle(Steel.ice)
                 }
                 .buttonStyle(.plain)
             }
@@ -98,12 +104,12 @@ struct PopoverView: View {
     }
 
     private var health: (label: String, color: Color) {
-        guard state.daemonConnected else { return ("Daemon stopped", .red) }
+        guard state.daemonConnected else { return ("Daemon stopped", Steel.danger) }
         let tld = state.tld.map { " · .\($0)" } ?? ""
         switch state.proxyState {
-        case "running", nil: return ("Running" + tld, .green)
-        case "failed": return ("Proxy failed", .red)
-        default: return (proxyLabel, .orange)
+        case "running", nil: return ("Running" + tld, Steel.ice)
+        case "failed": return ("Proxy failed", Steel.danger)
+        default: return (proxyLabel, Steel.amber)
         }
     }
 
@@ -118,19 +124,26 @@ struct PopoverView: View {
                     Image(systemName: item.symbol)
                         .font(.system(size: 16, weight: .medium))
                         .frame(maxWidth: .infinity, minHeight: 36)
-                        .foregroundStyle(tab == item ? Color.accentColor : .secondary)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(tab == item ? Color.accentColor.opacity(0.2) : .clear)
-                        )
+                        .foregroundStyle(tab == item ? Steel.ice : Steel.textSecondary)
+                        .shadow(color: tab == item ? Steel.ice.opacity(0.7) : .clear, radius: 4)
+                        .background {
+                            if tab == item {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Steel.iceDeep.opacity(0.22))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(Steel.ice.opacity(0.5), lineWidth: 1)
+                                    )
+                            }
+                        }
                         .overlay(alignment: .topTrailing) {
                             if item == .ports && !state.unclaimed.isEmpty {
                                 Text("\(state.unclaimed.count)")
                                     .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(.black)
                                     .padding(.horizontal, 4)
                                     .frame(minWidth: 15, minHeight: 15)
-                                    .background(Capsule().fill(Color.accentColor))
+                                    .background(Capsule().fill(Steel.amber))
                                     .offset(x: -18, y: 3)
                             }
                         }
@@ -141,7 +154,7 @@ struct PopoverView: View {
             }
         }
         .padding(6)
-        .background(CardBackground())
+        .background(SteelPanel())
     }
 
     // MARK: - Projects
@@ -225,7 +238,7 @@ struct PopoverView: View {
                     HStack(spacing: 8) {
                         StatusPill(
                             text: state.daemonConnected ? "Running" : "Stopped",
-                            color: state.daemonConnected ? .green : .red
+                            color: state.daemonConnected ? Steel.ice : Steel.danger
                         )
                         Button(state.daemonConnected ? "Stop" : "Start") {
                             state.daemonConnected ? model.stopDaemon() : model.startDaemon()
@@ -240,7 +253,7 @@ struct PopoverView: View {
                 if state.proxyState == "failed", let error = state.proxyError {
                     Text(error)
                         .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Steel.textSecondary)
                         .lineLimit(3)
                         .textSelection(.enabled)
                         .padding(.leading, 34)
@@ -250,13 +263,13 @@ struct PopoverView: View {
                 StatusRow(symbol: "network", title: "Domain") {
                     Text(state.tld.map { ".\($0)" } ?? "—")
                         .font(.system(size: 12.5, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Steel.textSecondary)
                 }
                 RowDivider()
                 StatusRow(symbol: "point.3.connected.trianglepath.dotted", title: "Routes") {
                     Text("\(state.upstreams.count + state.otherRoutes.count) active")
                         .font(.system(size: 12.5))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Steel.textSecondary)
                 }
                 RowDivider()
                 CardButton(symbol: "doc.text.magnifyingglass", title: "Open Logs", action: model.openLogs)
@@ -307,23 +320,23 @@ private struct ProjectRow: View {
                     .lineLimit(1)
                 Text(project.hostname)
                     .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Steel.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let detail = ownerDetail(owner, upstream: upstream) {
                     Text(detail)
                         .font(.system(size: 10.5))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Steel.textTertiary)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 4)
             if copied {
-                StatusPill(text: "Copied", color: .accentColor)
+                StatusPill(text: "Copied", color: Steel.ice)
             } else if let port = upstream.flatMap(portOf) {
-                StatusPill(text: ":\(port)", color: .green)
+                StatusPill(text: ":\(port)", color: Steel.ice)
             } else {
-                StatusPill(text: "Stopped", color: .secondary)
+                StatusPill(text: "Stopped", color: Steel.textTertiary)
             }
             MoreMenu {
                 Button("Open in Browser") { model.openProject(project.id) }
@@ -358,7 +371,7 @@ private struct RouteRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Badge(color: .gray, symbol: "arrow.triangle.branch")
+            Badge(color: Steel.ice, symbol: "arrow.triangle.branch")
             VStack(alignment: .leading, spacing: 2) {
                 Text(hostname)
                     .font(.system(size: 13, weight: .semibold))
@@ -366,13 +379,13 @@ private struct RouteRow: View {
                 if let detail = ownerDetail(owner, upstream: upstream) {
                     Text(detail)
                         .font(.system(size: 10.5))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Steel.textTertiary)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 4)
             if let port = portOf(upstream) {
-                StatusPill(text: ":\(port)", color: .green)
+                StatusPill(text: ":\(port)", color: Steel.ice)
             }
             MoreMenu {
                 Button("Open in Browser") { model.openRoute(hostname) }
@@ -399,19 +412,19 @@ private struct UnclaimedRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Badge(color: .orange, symbol: "dot.radiowaves.left.and.right")
+            Badge(color: Steel.amber, symbol: "dot.radiowaves.left.and.right")
             VStack(alignment: .leading, spacing: 2) {
                 Text(port.process.map(friendlyName) ?? "pid \(port.pid)")
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                 Text(candidateDir.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? port.upstream)
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Steel.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.head)
             }
             Spacer(minLength: 4)
-            StatusPill(text: ":\(port.port)", color: .orange)
+            StatusPill(text: ":\(port.port)", color: Steel.amber)
             MoreMenu {
                 Button("Open localhost:\(port.port)") { model.openUnclaimed(port.port) }
                 if let dir = candidateDir, !projects.contains(where: { $0.directory == dir }) {
@@ -444,11 +457,11 @@ private struct StatusRow<Trailing: View>: View {
         HStack(spacing: 12) {
             Image(systemName: symbol)
                 .font(.system(size: 14))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Steel.textSecondary)
                 .frame(width: 22)
             Text(title)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Steel.textSecondary)
             Spacer()
             trailing
         }
@@ -465,18 +478,7 @@ private struct Card<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) { content }
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
-            .background(CardBackground())
-    }
-}
-
-private struct CardBackground: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color.primary.opacity(0.05))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08))
-            )
+            .background(SteelPanel())
     }
 }
 
@@ -517,7 +519,7 @@ private struct SectionHeader: View {
                 Text(detail).font(.system(size: 11))
             }
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Steel.textSecondary)
         .padding(.horizontal, 4)
     }
 }
@@ -525,7 +527,10 @@ private struct SectionHeader: View {
 private struct RowDivider: View {
     var body: some View {
         Rectangle()
-            .fill(Color.primary.opacity(0.08))
+            .fill(LinearGradient(
+                colors: [.white.opacity(0.02), .white.opacity(0.08), .white.opacity(0.02)],
+                startPoint: .leading, endPoint: .trailing
+            ))
             .frame(height: 1)
     }
 }
@@ -536,24 +541,29 @@ private struct Badge: View {
     var symbol: String?
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
+        // Steel tile with a chrome edge; the colour lives in the glyph.
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        shape
             .fill(LinearGradient(
-                colors: [color.opacity(0.95), color.opacity(0.7)],
+                colors: [Color(hex: 0x2A2E36), Color(hex: 0x0E1013)],
                 startPoint: .top, endPoint: .bottom
             ))
+            .overlay(shape.strokeBorder(Steel.chrome, lineWidth: 1))
             .frame(width: 32, height: 32)
             .overlay {
-                if let letter {
-                    Text(letter.uppercased())
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                } else if let symbol {
-                    Image(systemName: symbol)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
+                Group {
+                    if let letter {
+                        Text(letter.uppercased())
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                    } else if let symbol {
+                        Image(systemName: symbol)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
                 }
+                .foregroundStyle(color)
+                .shadow(color: color.opacity(0.7), radius: 3)
             }
-            .shadow(color: color.opacity(0.3), radius: 3, y: 1)
+            .shadow(color: .black.opacity(0.5), radius: 3, y: 2)
     }
 }
 
@@ -564,13 +574,15 @@ private struct StatusPill: View {
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 6, height: 6)
+                .shadow(color: color.opacity(0.9), radius: 2.5)
             Text(text)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(color == .secondary ? Color.secondary : color)
+                .foregroundStyle(color)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .background(Capsule().fill(color.opacity(0.15)))
+        .background(Capsule().fill(color.opacity(0.10)))
+        .overlay(Capsule().strokeBorder(color.opacity(0.35), lineWidth: 1))
         .fixedSize()
     }
 }
@@ -584,7 +596,7 @@ private struct MoreMenu<Content: View>: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Steel.textSecondary)
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
@@ -611,7 +623,7 @@ private struct CardButton: View {
                     .font(.system(size: 13, weight: .medium))
                 Spacer()
             }
-            .foregroundStyle(hovering ? Color.primary : Color.secondary)
+            .foregroundStyle(hovering ? Steel.ice : Steel.textSecondary)
             .padding(.vertical, 10)
             .contentShape(Rectangle())
         }
@@ -632,14 +644,8 @@ private struct FooterButton: View {
             Label(title, systemImage: symbol)
                 .font(.system(size: 13, weight: .medium))
                 .frame(maxWidth: .infinity, minHeight: 34)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(hovering ? 0.1 : 0.05))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.1))
-                )
+                .foregroundStyle(hovering ? Steel.ice : Steel.textPrimary)
+                .background(SteelPanel(cornerRadius: 10, highlighted: hovering))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -656,13 +662,13 @@ private struct EmptyState: View {
         VStack(spacing: 6) {
             Image(systemName: symbol)
                 .font(.system(size: 24, weight: .light))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Steel.textSecondary)
                 .padding(.bottom, 2)
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
             Text(message)
                 .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Steel.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -677,7 +683,7 @@ private extension View {
             .padding(.horizontal, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(hovering ? 0.06 : 0))
+                    .fill(Color.white.opacity(hovering ? 0.05 : 0))
             )
             .padding(.horizontal, -6)
             .contentShape(Rectangle())

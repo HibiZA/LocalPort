@@ -35,6 +35,9 @@ private struct PreferencesView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(width: 520, height: 560)
+        .background(Steel.background)
+        .tint(Steel.ice)
+        .environment(\.colorScheme, .dark)
     }
 }
 
@@ -120,6 +123,7 @@ private struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .onAppear { browsers = AppSettings.installedBrowsers() }
     }
 }
@@ -173,11 +177,11 @@ private struct NetworkSettings: View {
                     if let portError {
                         Label(portError, systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Steel.amber)
                     } else if applied {
                         Label("Saved. The daemon restarted.", systemImage: "checkmark.circle.fill")
                             .font(.caption)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(Steel.ice)
                     }
                     Spacer()
                     Button("Defaults") {
@@ -196,6 +200,7 @@ private struct NetworkSettings: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 
     private func portField(_ label: String, text: Binding<String>) -> some View {
@@ -280,6 +285,7 @@ private struct CertificateSettings: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .onAppear(perform: refresh)
     }
 
@@ -297,7 +303,7 @@ private struct CertificateSettings: View {
     }
 
     private var statusColor: Color {
-        trusted == true ? .green : caExists && trusted == false ? .orange : .secondary
+        trusted == true ? Steel.ice : caExists && trusted == false ? Steel.amber : Steel.textSecondary
     }
 
     private func refresh() {
@@ -375,6 +381,7 @@ private struct AdvancedSettings: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 
     private func openConfig() {
@@ -416,7 +423,7 @@ private struct AboutView: View {
                 .padding(.horizontal)
 
             Link("GitHub", destination: URL(string: "https://github.com/HibiZA/LocalPort")!)
-                .foregroundStyle(.blue)
+                .foregroundStyle(Steel.ice)
 
             Spacer()
         }
@@ -437,6 +444,7 @@ final class PreferencesWindowController: NSWindowController {
             defer: false
         )
         window.title = "LocalPort Settings"
+        window.appearance = NSAppearance(named: .darkAqua)
         window.center()
         window.isReleasedWhenClosed = false
 
