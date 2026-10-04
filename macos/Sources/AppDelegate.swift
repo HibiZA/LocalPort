@@ -9,7 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Subsystems
     let menuBarController = MenuBarController()
     let daemonClient = DaemonClient()
-    let updateChecker = UpdateChecker()
+    let updater = Updater()
+    let devServers = DevServerManager()
     private lazy var supervisor = DaemonSupervisor(client: daemonClient)
 
     /// All daemon IPC happens here, serially, never on the main thread.
@@ -56,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menuBarController.delegate = self
         menuBarController.setup()
+        devServers.onChange = { [weak self] in self?.updateMenuBar() }
 
         NotificationCenter.default.addObserver(
             forName: .localportUninstallRequested, object: nil, queue: .main
@@ -79,6 +81,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.setupAttempted = false
             self?.refreshFromDaemon()
         }
+        center.addObserver(forName: .localportCheckForUpdatesRequested, object: nil, queue: .main) { [weak self] _ in
+            self?.updater.checkForUpdates()
+        }
         center.addObserver(forName: .localportOpenLogsRequested, object: nil, queue: .main) { [weak self] _ in
             self?.menuBarDidRequestOpenLogs()
         }
@@ -90,10 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         loadProjects()
         updateMenuBar()
 
-        updateChecker.onUpdateAvailable = { [weak self] version in
+        updater.onUpdateAvailable = { [weak self] version in
             self?.menuBarController.showUpdateAvailable(version: version)
         }
-        if AppSettings.checkForUpdates { updateChecker.startChecking() }
+        updater.start()
 
         supervisor.start()
 
@@ -112,9 +117,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        devServers.stopAll()
         if !uninstalling { saveProjects() }
         daemonPollTimer?.invalidate()
-        updateChecker.stop()
         daemonClient.disconnect()
         supervisor.interruptOwnedDaemon()
     }
@@ -385,8 +390,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             || projects[idx].port != settings.port
             || projects[idx].claimPort != claim
         projects[idx].customHostname = settings.customHostname
+        // Show a new custom URL at once; the daemon's reply confirms it.
+        if let custom = settings.customHostname { projects[idx].hostname = custom }
         projects[idx].port = settings.port
         projects[idx].claimPort = claim
+        projects[idx].startCommand = settings.startCommand
         if claim, let port = settings.port {
             releaseClaims(on: port, except: projectID)
         }
@@ -424,6 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func removeProject(_ projectID: String) {
         let directory = projects.first(where: { $0.id == projectID })?.directory
 
+        devServers.stop(projectID)
         projects.removeAll { $0.id == projectID }
         saveProjects()
         updateMenuBar()
@@ -479,16 +488,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             upstreams: upstreams,
             otherRoutes: otherRoutes,
             owners: owners,
-            unclaimed: AppSettings.showUnclaimedPorts ? unclaimed : []
+            unclaimed: AppSettings.showUnclaimedPorts ? unclaimed : [],
+            devServers: devServers.states,
+            startCommands: projects.reduce(into: [:]) { commands, project in
+                commands[project.id] = startCommand(for: project)
+            }
         ))
+    }
+
+    /// The command Start runs: the project's own, else the detected one.
+    private func startCommand(for project: Project) -> String? {
+        project.startCommand ?? StartCommand.detected(in: project.directory)
     }
 
     /// React to a settings change from the Settings window.
     private func applySettings() {
         updateMenuBar()
-        if AppSettings.checkForUpdates != updateChecker.isRunning {
-            AppSettings.checkForUpdates ? updateChecker.startChecking() : updateChecker.stop()
-        }
+        updater.applySettings()
     }
 
     /// "storefront is running" / "storefront stopped", if the user wants them.
@@ -564,6 +580,81 @@ extension AppDelegate: MenuBarControllerDelegate {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.directory)])
     }
 
+    func menuBarDidRequestOpenInEditor(_ projectID: String, editor: AppSettings.App) {
+        guard let project = projects.first(where: { $0.id == projectID }) else { return }
+        AppSettings.open(directory: project.directory, in: editor)
+    }
+
+    func menuBarDidRequestRename(_ projectID: String, label: String) {
+        guard let project = projects.first(where: { $0.id == projectID }) else { return }
+        let tld = daemonInfo?.tld ?? ConfigFile.tld()
+        updateProject(projectID, settings: ProjectSettings(
+            name: project.name,
+            color: project.color.hex,
+            customHostname: HostnameLabel.customHostname(for: label, project: project, tld: tld),
+            port: project.port,
+            claimPort: project.claimPort,
+            startCommand: project.startCommand
+        ))
+    }
+
+    func menuBarDidRequestStartServer(_ projectID: String) {
+        guard let project = projects.first(where: { $0.id == projectID }) else { return }
+        guard let command = startCommand(for: project) else {
+            menuBarDidRequestProjectSettings(projectID)
+            return
+        }
+        devServers.clearExit(projectID)
+        do {
+            try devServers.start(project, command: command)
+        } catch {
+            showAlert("Couldn't start \(project.name)", error.localizedDescription)
+        }
+    }
+
+    func menuBarDidRequestStopServer(_ projectID: String) {
+        devServers.stop(projectID)
+    }
+
+    func menuBarDidRequestRestartServer(_ projectID: String) {
+        devServers.stop(projectID)
+        // Start again once the old server has let go of its port.
+        func startWhenStopped(attempt: Int) {
+            if !devServers.isRunning(projectID) {
+                menuBarDidRequestStartServer(projectID)
+            } else if attempt < 60 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { startWhenStopped(attempt: attempt + 1) }
+            }
+        }
+        startWhenStopped(attempt: 0)
+    }
+
+    func menuBarDidRequestShowOutput(_ projectID: String) {
+        guard let project = projects.first(where: { $0.id == projectID }) else { return }
+        let path = DevServerManager.logPath(for: project)
+        if FileManager.default.fileExists(atPath: path) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        }
+    }
+
+    func menuBarDidRequestTogglePin(_ projectID: String) {
+        guard let idx = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        projects[idx].pinned.toggle()
+        saveProjects()
+        updateMenuBar()
+    }
+
+    /// Move a project into another's place (dragging in the popover). Only
+    /// within the pinned or the unpinned group.
+    func menuBarDidRequestMoveProject(_ projectID: String, to targetID: String) {
+        guard let from = projects.firstIndex(where: { $0.id == projectID }),
+              let to = projects.firstIndex(where: { $0.id == targetID }),
+              from != to, projects[from].pinned == projects[to].pinned else { return }
+        projects.insert(projects.remove(at: from), at: to)
+        saveProjects()
+        updateMenuBar()
+    }
+
     func menuBarDidRequestOpenUnclaimed(port: Int) {
         if let url = URL(string: "http://localhost:\(port)") {
             AppSettings.openInBrowser(url)
@@ -584,8 +675,15 @@ extension AppDelegate: MenuBarControllerDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        let tld = daemonInfo?.tld ?? ConfigFile.tld()
-        let panel = ProjectSettingsPanel(project: project, tld: tld)
+        var taken: [String: String] = [:]
+        for route in otherRoutes { taken[route.hostname] = "a localport run server" }
+        for other in projects where other.id != projectID { taken[other.hostname] = other.name }
+        let panel = ProjectSettingsPanel(project: project, context: ProjectSettingsContext(
+            tld: daemonInfo?.tld ?? ConfigFile.tld(),
+            upstream: upstreams[projectID],
+            owner: owners[project.hostname],
+            taken: taken
+        ))
         objc_setAssociatedObject(self, "projectSettings", panel, .OBJC_ASSOCIATION_RETAIN)
 
         panel.onSave = { [weak self] settings in
@@ -648,9 +746,7 @@ extension AppDelegate: MenuBarControllerDelegate {
     }
 
     func menuBarDidRequestUpdate() {
-        if let url = updateChecker.releaseURL {
-            NSWorkspace.shared.open(url)
-        }
+        updater.checkForUpdates()
     }
 
     private func performUninstall() {

@@ -10,6 +10,14 @@ protocol MenuBarControllerDelegate: AnyObject {
     func menuBarDidSelectRoute(hostname: String)
     func menuBarDidRequestCopyURL(hostname: String)
     func menuBarDidRequestReveal(_ projectID: String)
+    func menuBarDidRequestOpenInEditor(_ projectID: String, editor: AppSettings.App)
+    func menuBarDidRequestRename(_ projectID: String, label: String)
+    func menuBarDidRequestStartServer(_ projectID: String)
+    func menuBarDidRequestStopServer(_ projectID: String)
+    func menuBarDidRequestRestartServer(_ projectID: String)
+    func menuBarDidRequestShowOutput(_ projectID: String)
+    func menuBarDidRequestTogglePin(_ projectID: String)
+    func menuBarDidRequestMoveProject(_ projectID: String, to targetID: String)
     func menuBarDidRequestProjectSettings(_ projectID: String)
     func menuBarDidRequestOpenUnclaimed(port: Int)
     func menuBarDidRequestAddProject(directory: String)
@@ -39,6 +47,10 @@ struct MenuState {
     var owners: [String: RouteOwner] = [:]
     /// Listening dev servers no project claims.
     var unclaimed: [UnclaimedPort] = []
+    /// project.id -> state of a dev server LocalPort started.
+    var devServers: [String: DevServerManager.State] = [:]
+    /// project.id -> command Start runs (set or detected).
+    var startCommands: [String: String] = [:]
 }
 
 /// The status item and its SwiftUI popover.
@@ -81,7 +93,7 @@ final class MenuBarController: NSObject {
         model.state = state
     }
 
-    func showUpdateAvailable(version: String) {
+    func showUpdateAvailable(version: String?) {
         model.availableUpdate = version
     }
 
@@ -130,6 +142,16 @@ final class MenuBarController: NSObject {
         model.openRoute = { [weak self] host in self?.closing { self?.delegate?.menuBarDidSelectRoute(hostname: host) }() }
         model.copyURL = { [weak self] host in self?.delegate?.menuBarDidRequestCopyURL(hostname: host) }
         model.reveal = { [weak self] id in self?.closing { self?.delegate?.menuBarDidRequestReveal(id) }() }
+        model.openInEditor = { [weak self] id, editor in
+            self?.closing { self?.delegate?.menuBarDidRequestOpenInEditor(id, editor: editor) }()
+        }
+        model.renameProject = { [weak self] id, label in self?.delegate?.menuBarDidRequestRename(id, label: label) }
+        model.startServer = { [weak self] id in self?.delegate?.menuBarDidRequestStartServer(id) }
+        model.stopServer = { [weak self] id in self?.delegate?.menuBarDidRequestStopServer(id) }
+        model.restartServer = { [weak self] id in self?.delegate?.menuBarDidRequestRestartServer(id) }
+        model.showOutput = { [weak self] id in self?.closing { self?.delegate?.menuBarDidRequestShowOutput(id) }() }
+        model.togglePin = { [weak self] id in self?.delegate?.menuBarDidRequestTogglePin(id) }
+        model.moveProject = { [weak self] id, target in self?.delegate?.menuBarDidRequestMoveProject(id, to: target) }
         model.projectSettings = { [weak self] id in
             self?.closing { self?.delegate?.menuBarDidRequestProjectSettings(id) }()
         }
@@ -196,11 +218,18 @@ final class MenuBarController: NSObject {
 // MARK: - NSPopoverDelegate
 
 extension MenuBarController: NSPopoverDelegate {
+    func popoverWillShow(_ notification: Notification) {
+        // Picks up editors installed or removed, and the Settings choice.
+        model.editors = AppSettings.installedEditors()
+    }
+
     func popoverDidShow(_ notification: Notification) {
         updateSampler()
     }
 
     func popoverDidClose(_ notification: Notification) {
+        // Closing the popover cancels an unsaved rename.
+        model.renamingProjectID = nil
         updateSampler()
     }
 }

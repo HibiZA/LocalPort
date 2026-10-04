@@ -89,11 +89,22 @@ cp macos/Resources/MenuBarIcon@2x.png "$APP_DIR/Contents/Resources/" 2>/dev/null
 # Create minimal PkgInfo
 echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
-# 4. Ad-hoc code sign (removes "damaged" Gatekeeper error)
+# Sparkle (self-updates): embed the framework from the Swift package and let
+# the app find it there.
+SPARKLE_FRAMEWORK="macos/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+mkdir -p "$APP_DIR/Contents/Frameworks"
+ditto "$SPARKLE_FRAMEWORK" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
+if ! otool -l "$APP_DIR/Contents/MacOS/$APP_NAME" | grep -q "@executable_path/../Frameworks"; then
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_DIR/Contents/MacOS/$APP_NAME"
+fi
+
+# 4. Ad-hoc code sign (removes "damaged" Gatekeeper error). Not --deep on the
+# app: Sparkle.framework keeps the signature it ships with.
 echo "  Signing..."
-codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/localportd"
-codesign --force --deep --sign - "$APP_DIR/Contents/Helpers/localport"
-codesign --force --deep --sign - "$APP_DIR"
+codesign --force --sign - "$APP_DIR/Contents/Helpers/localportd"
+codesign --force --sign - "$APP_DIR/Contents/Helpers/localport"
+codesign --force --sign - "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR"
 
 echo "  Built: $APP_DIR"
 

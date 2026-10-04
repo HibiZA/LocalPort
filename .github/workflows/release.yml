@@ -46,9 +46,40 @@ jobs:
           name: LocalPort.dmg
           path: build/LocalPort.dmg
 
+      # Notes come from the annotated tag's message
+      # (git tag -a v1.2.3 --cleanup=verbatim -F notes.md; verbatim keeps "## " lines),
+      # used for the GitHub release and Sparkle's update dialog. checkout
+      # fetches the tag without its annotation, so fetch it again.
+      - name: Release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          : > build/release-notes.md
+          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" = tag ]; then
+            git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$GITHUB_REF_NAME" > build/release-notes.md
+          fi
+
+      # The zip and appcast.xml installed apps update from (SUFeedURL points at
+      # the latest release's appcast.xml). Signed with the key whose public half
+      # is SUPublicEDKey in Info.plist.
+      - name: Sparkle update
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::warning::SPARKLE_PRIVATE_KEY is not set, so installed apps won't be offered this release."
+            exit 0
+          fi
+          bash scripts/make-appcast.sh "${GITHUB_REF_NAME#v}" build/release-notes.md
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/LocalPort.dmg
+          files: |
+            build/LocalPort.dmg
+            build/LocalPort.zip
+            build/appcast.xml
+          body_path: build/release-notes.md
           generate_release_notes: true

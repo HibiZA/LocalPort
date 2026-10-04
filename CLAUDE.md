@@ -66,10 +66,14 @@ supervises the daemon and handles UI and privileged setup.
   CA trust is set in-process (`SecTrustSettings`), since macOS rejects admin trust
   changes from the prompt's root shell. `SystemSetup.currentVersion` forces a re-run
   when setup changes.
+- `System/DevServers` — starts project dev servers (`StartCommand` detects the command): the user's
+  shell environment, a `LOCALPORT_PROJECT` tag, its own process group; stopped at quit.
 - `System/ProcessStats` — CPU/memory (`proc_pid_rusage`), GPU (IOAccelerator clients in
   the IORegistry) and network (`nettop`) per pid; runs only while the Ports tab is open.
 - `System/ConfigFile` — reads and writes the daemon's `config.toml`, which is the single
   source of truth for TLD and ports.
+- `Updater` — Sparkle self-updates (feed + public key in `Info.plist`); `scripts/build.sh` embeds
+  Sparkle.framework, `scripts/make-appcast.sh` signs a release's zip and writes its `appcast.xml`.
 - `IPC/DaemonClient` — synchronous, thread-safe socket client. Never call it on the main thread.
 - `MenuBar/MenuBarController` — status item + `NSPopover`; `PopoverView` (SwiftUI) renders
   `MenuState` from a `PopoverModel` and forwards actions to the delegate.

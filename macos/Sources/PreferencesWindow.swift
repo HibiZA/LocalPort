@@ -16,6 +16,7 @@ extension Notification.Name {
     /// Re-run setup.sh even if the configuration looks current.
     static let localportSetupRequested = Notification.Name("localportSetupRequested")
     static let localportOpenLogsRequested = Notification.Name("localportOpenLogsRequested")
+    static let localportCheckForUpdatesRequested = Notification.Name("localportCheckForUpdatesRequested")
 }
 
 // MARK: - SwiftUI Preferences View
@@ -103,10 +104,22 @@ private struct GeneralSettings: View {
     @AppStorage(AppSettings.Key.browser) private var browser = ""
     @AppStorage(AppSettings.Key.notifyOnStatusChange) private var notify = false
     @AppStorage(AppSettings.Key.checkForUpdates) private var checkForUpdates = true
-    @State private var browsers: [AppSettings.Browser] = []
+    @AppStorage(AppSettings.Key.installUpdatesAutomatically) private var installUpdates = false
+    @AppStorage(AppSettings.Key.editor) private var editor = ""
+    @State private var browsers: [AppSettings.App] = []
+    @State private var editors: [AppSettings.App] = []
     @State private var notificationsDenied = false
 
     private var inApplications: Bool { Bundle.main.bundlePath.hasPrefix("/Applications") }
+
+    /// From Sparkle's own record of its last check.
+    private var lastCheckText: String {
+        guard appVersion != "dev" else { return "Updates work in the app bundle only." }
+        guard let date = UserDefaults.standard.object(forKey: "SULastCheckTime") as? Date else {
+            return "Not checked yet."
+        }
+        return "Last checked \(date.formatted(.relative(presentation: .named)))."
+    }
 
     var body: some View {
         Form {
@@ -141,6 +154,21 @@ private struct GeneralSettings: View {
                 }
             }
 
+            Section("Editor") {
+                if editors.isEmpty {
+                    Caption("No supported editor found. LocalPort works with VS Code, Cursor, Windsurf, Zed, Sublime Text, Nova, JetBrains IDEs and Xcode.")
+                } else {
+                    Picker("Edit projects in", selection: $editor) {
+                        Text("Automatic (\(editors[0].name))").tag("")
+                        Divider()
+                        ForEach(editors) { app in
+                            Label { Text(app.name) } icon: { Image(nsImage: app.icon) }
+                                .tag(app.id)
+                        }
+                    }
+                }
+            }
+
             Section("Notifications") {
                 Toggle("Notify when a project starts or stops", isOn: $notify)
                     .onChange(of: notify) { enabled in
@@ -159,11 +187,21 @@ private struct GeneralSettings: View {
 
             Section("Updates") {
                 Toggle("Check for updates automatically", isOn: $checkForUpdates)
+                Toggle("Download and install updates automatically", isOn: $installUpdates)
+                    .disabled(!checkForUpdates)
+                HStack {
+                    Caption(lastCheckText)
+                    Spacer()
+                    Button("Check Now") { post(.localportCheckForUpdatesRequested) }
+                }
             }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .onAppear { browsers = AppSettings.installedBrowsers() }
+        .onAppear {
+            browsers = AppSettings.installedBrowsers()
+            editors = AppSettings.installedEditors()
+        }
     }
 }
 

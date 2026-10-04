@@ -70,6 +70,8 @@ Grab the latest `.dmg` from [**Releases**](https://github.com/HibiZA/LocalPort/r
 
 On first launch, macOS will show an "unidentified developer" warning. Go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
+After that, LocalPort updates itself (see [Updates](#updates)).
+
 ### Build from Source
 
 ```bash
@@ -106,15 +108,27 @@ That's it. LocalPort handles the rest.
 
 Click the LocalPort icon to open the popover. It has three tabs (⌘1–⌘3):
 
-- **Projects** — each project with its hostname and port, running ones first. Click a project to open it in your browser. Hover a row for **Copy URL** and **Open** buttons; its **•••** menu has **Open in Browser**, **Copy URL**, **Reveal in Finder** and **Settings…**, and shows which process serves it (for example `node (pid 4242) on [::1]:5173`). **Add Project…** (⌘N) is at the bottom of the list.
+- **Projects** — each project with its hostname and port, pinned ones in their own section on top. Drag a row to reorder it, and use **Pin to Top** in its **•••** menu to pin it. Click a project to open it in your browser. Hover a row for **Start** / **Stop** (see [Dev servers](#dev-servers)), **Copy URL**, **Open in editor** and **Open** buttons, and a pencil next to the URL that renames it in place (the `.test` part stays fixed; Return saves, Esc cancels, and an empty name goes back to the default); its **•••** menu has **Open in Browser**, **Open in Editor** (VS Code, Cursor, Windsurf, Zed, Sublime Text, Nova, JetBrains IDEs or Xcode, whichever are installed), **Copy URL**, **Rename URL…**, **Reveal in Finder**, **Pin to Top** and **Settings…**, and shows which process serves it (for example `node (pid 4242) on [::1]:5173`). **Add Project…** (⌘N) is at the bottom of the list.
 - **Ports** — every server LocalPort sees: project servers, other routes (such as servers started with `localport run` for a project you haven't added) and unclaimed ports, each with its [resource usage](#resource-usage).
 - **System** — whether the daemon and the HTTPS proxy are running (with the proxy's error if it failed), the TLD, the number of active routes, a button to start or stop the daemon, and **Open Logs**.
 
 **Unclaimed** ports are dev servers LocalPort can see but can't attribute to a project. Each one's **•••** menu offers:
 - **Add "folder" as Project** — register the folder the server is running in
-- **Assign to Project** — route that port to an existing project whatever process listens on it. Use this for servers that don't run from the project folder, such as a Docker-published port. You can also set it in a project's **Settings…** with a port and **Claim this port**.
+- **Assign to Project** — route that port to an existing project whatever process listens on it. Use this for servers that don't run from the project folder, such as a Docker-published port. You can also set it in a project's **Settings…** with a port and **Route this port from any process**.
 
 macOS system services, debugger and ephemeral ports, and sockets bound to VPN/LAN addresses are left out of this list. You can hide the list in **Settings → Network**.
+
+### Dev servers
+
+LocalPort can start a project's dev server for you. Hover the project and click ▶, or use **Start Dev Server** in its **•••** menu. LocalPort runs the command:
+
+- in the project folder, through your login shell, with the PATH your terminal has (Homebrew, nvm, asdf and so on)
+- tagged with `LOCALPORT_PROJECT`, so its port goes to the project even in a monorepo
+- in a process group of its own, so **Stop** also ends the processes it starts (npm → node → esbuild)
+
+The row shows **Starting…** until the server listens, then its port. If the server stops by itself with an error, the row shows **Exited** with the exit code. **Show Output** opens the server's log (`~/Library/Logs/LocalPort/projects/<name>.log`). Quitting LocalPort stops the servers it started.
+
+LocalPort finds the command from the project's files: the `dev`, `start` or `serve` script in `package.json` (run with npm, pnpm, yarn or bun, from `packageManager` or the lockfile), `bin/dev`, `bin/rails server`, `manage.py runserver`, `mix phx.server`, `cargo run`, `go run .` or `docker compose up`. To use a different command, set **Start command** in the project's **Settings…**.
 
 ### Resource usage
 
@@ -135,11 +149,19 @@ The figures cover the process that holds the listening socket, not processes it 
 
 Open **Settings** from the popover (⌘,). Its tabs (⌘1–⌘5):
 
-- **General** — launch at login, which browser opens projects, notifications when a project starts or stops (click one to open the project), automatic update checks.
+- **General** — launch at login, which browser opens projects, which editor opens project folders, notifications when a project starts or stops (click one to open the project), and [updates](#updates).
 - **Network** — the TLD, whether to list unclaimed ports, and the HTTP / HTTPS / DNS ports LocalPort listens on. Changing ports restarts the daemon and asks for your password once to update the port forwarding.
 - **Certificate** — whether your Mac trusts LocalPort's local certificate authority, with **Trust Certificate…** if it doesn't.
 - **Advanced** — the daemon's log level, restart the daemon, run setup again, open the logs or `config.toml`, and uninstall.
 - **About** — version and links.
+
+### Updates
+
+LocalPort updates itself with [Sparkle](https://sparkle-project.org). It checks once a day. When it finds an update, the popover header shows the new version. Click it, or use **Check for Updates…** in the System tab or **Settings → General**, to see the release notes and install. Turn on **Download and install updates automatically** to install updates when you quit LocalPort.
+
+Every update is signed. LocalPort installs only an update whose EdDSA signature matches the public key built into the app, so a changed download is refused.
+
+Versions before 0.3.0 can't update themselves: download 0.3.0 from Releases once.
 
 ### Monorepos and explicit tagging
 
@@ -242,7 +264,7 @@ Browser → https://myapp.test
 
 The daemon polls every 2 seconds using macOS `libproc` APIs (in-process syscalls, no subprocesses) to discover listening TCP ports. For each port it attributes the listener to a project in one of three ways, in this order:
 
-1. **Assigned port.** A port assigned to a project (Unclaimed Ports → Assign to Project, or **Claim this port** in Settings) always routes to that project, whichever process listens on it.
+1. **Assigned port.** A port assigned to a project (Unclaimed Ports → Assign to Project, or **Route this port from any process** in a project's Settings) always routes to that project, whichever process listens on it.
 2. **Explicit tag (ground truth).** If the server was started with [`localport run`](#monorepos-and-explicit-tagging), it carries a `LOCALPORT_PROJECT` environment variable. The daemon reads that variable back from the process and maps the port to that project directly.
 3. **Working-directory heuristic (zero-config default).** Otherwise the daemon reads the process's working directory; if it sits inside a registered project directory, the port is mapped to that project. When project directories nest (monorepos), the most specific match wins.
 
@@ -256,6 +278,20 @@ A tag always overrides the directory heuristic. Each project gets one route. If 
 ## Uninstall
 
 **Settings → Advanced → Uninstall LocalPort…** removes the DNS resolver, port forwarding, the trusted local CA, LocalPort's data and logs, and the app itself. Removing the CA's trust shows a macOS dialog, in addition to the password prompt.
+
+## Releasing
+
+Push a `v*` tag. The release workflow tests, builds the universal app and DMG, and publishes a GitHub release with the Sparkle update (`LocalPort.zip` and `appcast.xml`).
+
+1. Write the release notes in Markdown, then tag with them:
+   ```bash
+   git tag -a v1.2.3 --cleanup=verbatim -F notes.md
+   git push origin v1.2.3
+   ```
+   The notes become the GitHub release text and the text of the update dialog. (`--cleanup=verbatim` keeps `## ` headings, which git otherwise drops as comments.)
+2. The workflow signs the update with the `SPARKLE_PRIVATE_KEY` repository secret. Its public key is `SUPublicEDKey` in `macos/Resources/Info.plist`. Without the secret the release is published with a warning, but installed apps aren't offered it.
+
+To test an update locally, `scripts/make-appcast.sh` signs with the key in your login keychain (`generate_keys --account localport`, from `macos/.build/artifacts/sparkle/Sparkle/bin`).
 
 ## Contributing
 

@@ -24,5 +24,12 @@
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
+    <!-- Sparkle: the release workflow uploads appcast.xml with each release. -->
+    <key>SUFeedURL</key>
+    <string>https://github.com/HibiZA/LocalPort/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>B/b3YLMhFfeMd0yguMCQKBAFiMPbJ6hebBDBwcqH5DU=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
 </dict>
 </plist>

@@ -18,6 +18,11 @@ struct Project: Identifiable, Codable {
     /// Route `port` to this project even when the server runs elsewhere
     /// (e.g. a Docker-published port). Set via "Assign to Project".
     var claimPort = false
+    /// Shell command that starts the dev server; nil = the detected one
+    /// (see `StartCommand`).
+    var startCommand: String?
+    /// Pinned projects come first in the popover.
+    var pinned = false
 
     var directoryName: String {
         (directory as NSString).lastPathComponent
@@ -32,7 +37,7 @@ struct Project: Identifiable, Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case slug, name, directory, hostname, color, customHostname, port, claimPort
+        case slug, name, directory, hostname, color, customHostname, port, claimPort, startCommand, pinned
         case legacyID = "id" // pre-1.0 saves stored the daemon name as `id`
     }
 
@@ -48,6 +53,8 @@ struct Project: Identifiable, Codable {
         customHostname = try c.decodeIfPresent(String.self, forKey: .customHostname)
         port = try c.decodeIfPresent(Int.self, forKey: .port)
         claimPort = try c.decodeIfPresent(Bool.self, forKey: .claimPort) ?? false
+        startCommand = try c.decodeIfPresent(String.self, forKey: .startCommand)
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -60,6 +67,8 @@ struct Project: Identifiable, Codable {
         try c.encodeIfPresent(customHostname, forKey: .customHostname)
         try c.encodeIfPresent(port, forKey: .port)
         try c.encode(claimPort, forKey: .claimPort)
+        try c.encodeIfPresent(startCommand, forKey: .startCommand)
+        try c.encode(pinned, forKey: .pinned)
     }
 }
 
