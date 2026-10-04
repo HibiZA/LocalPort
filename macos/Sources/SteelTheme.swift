@@ -1,46 +1,37 @@
 import AppKit
 import SwiftUI
 
-/// LocalPort's look, matching the app icon: near-black liquid steel with
-/// sharp chrome edges and ice-blue accents.
+/// LocalPort's look, after the app icon: dark liquid steel with icy blue
+/// accents. Surfaces are brushed-metal gradients with a soft edge, lighter
+/// at the top; no chrome highlights or glows.
 enum Steel {
+    /// Accent: running servers, the selected tab, hover.
     static let ice = Color(hex: 0x7FD8FF)
     static let iceDeep = Color(hex: 0x1A6FD0)
-    /// Warm glint, as on the icon's chrome rim; used for unclaimed ports.
-    static let amber = Color(hex: 0xFFB45C)
+    /// Waiting states and unclaimed ports.
+    static let amber = Color(hex: 0xF0AE62)
     static let danger = Color(hex: 0xFF6B6B)
 
     static let textPrimary = Color.white.opacity(0.92)
     static let textSecondary = Color(hex: 0xA4ACB9)
     static let textTertiary = Color(hex: 0x6B7280)
 
-    /// Popover / window background.
+    /// Window and popover background.
     static let background = LinearGradient(
-        colors: [Color(hex: 0x17191E), Color(hex: 0x0B0C0F), Color(hex: 0x060709)],
+        colors: [Color(hex: 0x17191E), Color(hex: 0x0D0E11), Color(hex: 0x08090B)],
         startPoint: .top, endPoint: .bottom
     )
 
-    /// Raised steel surface (cards, buttons, badges).
+    /// Raised steel: cards, buttons, tiles.
     static let surface = LinearGradient(
-        colors: [Color(hex: 0x1D2026), Color(hex: 0x121419)],
+        colors: [Color(hex: 0x1D2026), Color(hex: 0x14161A)],
         startPoint: .top, endPoint: .bottom
     )
 
-    /// Chrome edge: mostly dim with a few hard highlights, like polished metal.
-    static let chrome = AngularGradient(
-        stops: [
-            .init(color: .white.opacity(0.10), location: 0.00),
-            .init(color: .white.opacity(0.55), location: 0.08),
-            .init(color: .white.opacity(0.08), location: 0.18),
-            .init(color: .white.opacity(0.04), location: 0.40),
-            .init(color: Color(hex: 0x9FD9FF).opacity(0.45), location: 0.55),
-            .init(color: .white.opacity(0.05), location: 0.64),
-            .init(color: .white.opacity(0.04), location: 0.82),
-            .init(color: .white.opacity(0.40), location: 0.92),
-            .init(color: .white.opacity(0.10), location: 1.00),
-        ],
-        center: .center,
-        angle: .degrees(-35)
+    /// Soft edge of a steel surface, catching a little light at the top.
+    static let edge = LinearGradient(
+        colors: [Color.white.opacity(0.12), Color.white.opacity(0.04)],
+        startPoint: .top, endPoint: .bottom
     )
 }
 
@@ -55,9 +46,9 @@ extension Color {
     }
 }
 
-/// A steel surface with a chrome edge.
+/// A steel surface with a soft edge.
 struct SteelPanel: View {
-    var cornerRadius: CGFloat = 14
+    var cornerRadius: CGFloat = 12
     var highlighted = false
 
     var body: some View {
@@ -65,12 +56,11 @@ struct SteelPanel: View {
         shape
             .fill(Steel.surface)
             .overlay(shape.fill(Color.white.opacity(highlighted ? 0.04 : 0)))
-            .overlay(shape.strokeBorder(Steel.chrome, lineWidth: 1))
-            .shadow(color: .black.opacity(0.5), radius: 6, y: 3)
+            .overlay(shape.strokeBorder(Steel.edge, lineWidth: 1))
     }
 }
 
-/// Steel segmented tab bar: ice-blue highlight on the selected tab.
+/// Segmented tab bar; the selected tab is tinted ice blue.
 /// `vertical` stacks the icon over the title (for the Settings window).
 struct SteelTabBar<Value: Hashable>: View {
     struct Item {
@@ -91,8 +81,8 @@ struct SteelTabBar<Value: Hashable>: View {
                 tab(items[index])
             }
         }
-        .padding(4)
-        .background(SteelPanel(cornerRadius: 12))
+        .padding(3)
+        .background(SteelPanel(cornerRadius: 10))
     }
 
     @ViewBuilder
@@ -116,30 +106,25 @@ struct SteelTabBar<Value: Hashable>: View {
             : AnyLayout(HStackLayout(spacing: 6))
         return layout {
             Image(systemName: item.symbol)
-                .font(.system(size: vertical ? 14 : 12, weight: .semibold))
+                .font(.system(size: vertical ? 14 : 12, weight: .medium))
                 .frame(height: vertical ? 18 : nil)
             Text(item.title)
                 .font(.system(size: vertical ? 11 : 12.5, weight: .medium))
             if let badge = item.badge, badge > 0 {
                 Text("\(badge)")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.black)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Steel.amber)
                     .padding(.horizontal, 5)
                     .frame(minWidth: 16, minHeight: 16)
-                    .background(Capsule().fill(Steel.amber))
+                    .background(Capsule().fill(Steel.amber.opacity(0.16)))
             }
         }
         .foregroundStyle(selected ? Steel.ice : Steel.textSecondary)
-        .shadow(color: selected ? Steel.ice.opacity(0.6) : .clear, radius: 3)
-        .frame(maxWidth: .infinity, minHeight: vertical ? 44 : 30)
+        .frame(maxWidth: .infinity, minHeight: vertical ? 44 : 28)
         .background {
             if selected {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Steel.iceDeep.opacity(0.22))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(Steel.ice.opacity(0.5), lineWidth: 1)
-                    )
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Steel.iceDeep.opacity(0.20))
             }
         }
         .contentShape(Rectangle())
